@@ -12,6 +12,9 @@ from fastapi.responses import RedirectResponse
 from . import db as dbm
 
 ph = PasswordHasher()
+_DUMMY_HASH = ph.hash("timing-equalization-placeholder")
+_login_fails: dict[str, list[float]] = {}
+LOGIN_WINDOW, LOGIN_MAX = 300, 10   # max 10 failures per IP per 5 min
 SESSION_DAYS = 90
 COOKIE = "fv_session"
 
@@ -24,10 +27,26 @@ def create_user(db, username, password, role="member", can_upload=True, can_dele
     db.commit()
 
 
+def rate_limited(ip: str) -> bool:
+    import time
+    now = time.time()
+    _login_fails[ip] = [t for t in _login_fails.get(ip, []) if now - t < LOGIN_WINDOW]
+    return len(_login_fails[ip]) >= LOGIN_MAX
+
+
+def note_login_failure(ip: str):
+    import time
+    _login_fails.setdefault(ip, []).append(time.time())
+
+
 def check_login(db, username, password):
     row = db.execute("SELECT * FROM users WHERE username=? AND disabled=0",
                      (username.strip(),)).fetchone()
     if not row:
+        try:  # equalize timing so a missing user isn't faster than a wrong password
+            ph.verify(_DUMMY_HASH, password)
+        except VerifyMismatchError:
+            pass
         return None
     try:
         ph.verify(row["pw_hash"], password)

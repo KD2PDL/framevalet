@@ -41,6 +41,14 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"),
               name="static")
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        return resp
+
     @app.exception_handler(307)
     async def redirect_handler(request: Request, exc):
         return RedirectResponse(exc.headers["Location"], 307)

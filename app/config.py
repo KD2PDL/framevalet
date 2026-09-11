@@ -5,6 +5,7 @@ controls) live on the tvs table; the TV_* env vars seed the FIRST TV on a fresh
 boot so headless Docker deploys still work.
 """
 import os
+import re as _re
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "./data")).resolve()
@@ -74,9 +75,16 @@ def get(db, key: str) -> str:
     return row["value"] if row else default
 
 
+_HEX_COLOR = _re.compile(r"^#[0-9a-fA-F]{3,8}$")
+
+
 def set(db, key: str, value: str):
     if env_pinned(key):
         raise ValueError(f"{key} is pinned by environment variable {SETTINGS[key][0]}")
+    if key == "brand_accent" and value and not _HEX_COLOR.match(value):
+        raise ValueError("accent must be a hex color like #b8892f")
+    if key == "rclone_remote" and value.startswith("-"):
+        raise ValueError("rclone remote cannot start with '-'")
     db.execute(
         "INSERT INTO settings(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))

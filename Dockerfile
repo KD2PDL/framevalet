@@ -9,6 +9,9 @@ COPY app ./app
 RUN pip install --no-cache-dir .
 
 ENV DATA_DIR=/data PORT=8470 HOST=0.0.0.0
+RUN useradd --system --create-home --uid 10001 framevalet \
+    && mkdir -p /data && chown framevalet:framevalet /data
+USER framevalet
 VOLUME /data
 EXPOSE 8470
 

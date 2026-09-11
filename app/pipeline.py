@@ -27,6 +27,8 @@ THUMB = 480
 ACCEPTED = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".avif", ".tif", ".tiff",
             ".webp", ".bmp", ".gif"}
 
+Image.MAX_IMAGE_PIXELS = 120_000_000   # ~120 Mpx; bomb guard for low-RAM hosts
+
 _SRGB = ImageCms.createProfile("sRGB")
 
 

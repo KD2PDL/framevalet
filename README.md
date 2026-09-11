@@ -59,7 +59,7 @@ pinned by an env var (env always wins and the UI says so).
 ```yaml
 services:
   framevalet:
-    image: ghcr.io/KD2PDL/framevalet:latest
+    image: ghcr.io/kd2pdl/framevalet:latest
     restart: unless-stopped
     ports: ["8470:8470"]
     volumes:
@@ -83,6 +83,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/KD2PDL/framevalet/main/p
 Creates an unprivileged Debian container running framevalet under systemd,
 with rclone preinstalled.
 
+> **First GitHub publish:** the container image is private until you set the
+> `framevalet` package to Public in your GitHub package settings.
+
 ## OneDrive (or any cloud folder) sync
 
 1. `rclone config` (once, in the container/host) and create a remote, e.g.
@@ -103,6 +106,14 @@ with rclone preinstalled.
   framevalet degrades to a clearly-labeled unreachable queue rather than
   breaking.
 - Give each TV a DHCP reservation so its IP never changes.
+- **Shared library, by design:** any signed-in member can crop, matte, re-title,
+  and choose what shows on a TV; members can delete only their own uploads
+  (admins can delete anything). It's a household wall, not per-user private
+  albums.
+- **Pre-1.0 data note:** the database schema may change between releases without
+  an automatic migration. Your photo originals on disk are always safe, but a
+  schema bump can require starting the library database fresh. Back up the data
+  directory before upgrading.
 - Reddit's anonymous API is blocked on some networks; the other sources are
   unaffected.
 

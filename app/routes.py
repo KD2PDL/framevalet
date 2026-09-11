@@ -81,8 +81,13 @@ def login_page(request: Request, db=Depends(dbm.get_db)):
 @router.post("/login")
 def login_post(request: Request, username: str = Form(...), password: str = Form(...),
                db=Depends(dbm.get_db)):
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    if auth.rate_limited(ip):
+        return render_page(request, db, "login.html",
+                           error="Too many attempts. Wait a few minutes and try again.")
     user = auth.check_login(db, username, password)
     if not user:
+        auth.note_login_failure(ip)
         return render_page(request, db, "login.html", error="Wrong username or password")
     resp = RedirectResponse("/", 303)
     auth.set_cookie(resp, auth.start_session(db, user["id"]))
@@ -151,9 +156,15 @@ async def upload(request: Request, files: list[UploadFile] = File(...),
                  db=Depends(dbm.get_db), user=Depends(auth.current_user)):
     if not user["can_upload"]:
         raise HTTPException(403, "uploads not allowed for this account")
+    if len(files) > 200:
+        raise HTTPException(413, "too many files in one upload (max 200)")
     results = []
     for f in files:
         data = await f.read()
+        if len(data) > 80_000_000:          # 80 MB per photo is generous for 4K
+            results.append({"file": (f.filename or "photo")[:80], "ok": False,
+                            "error": "file too large (max 80 MB)"})
+            continue
         name = Path(f.filename or "photo").name
         if Path(name).suffix.lower() not in pipeline.ACCEPTED:
             results.append({"file": name, "ok": False, "error": "unsupported format"})
@@ -603,6 +614,8 @@ def wake(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
     svc = TVService(_tv(db, tv_id))
     try:
+        if not svc.port_open():
+            raise HTTPException(502, "TV is unreachable right now")
         return JSONResponse(svc.artmode_settings())
     finally:
         svc.reset()
@@ -615,10 +628,13 @@ async def artmode_set(tv_id: int, request: Request, db=Depends(dbm.get_db),
     motion_sensitivity, brightness_sensor, slideshow_minutes, slideshow_shuffle}."""
     body = await request.json()
     svc = TVService(_tv(db, tv_id))
+    if not svc.port_open():
+        svc.reset()
+        raise HTTPException(502, "TV is unreachable right now")
     applied, errors = [], {}
     try:
         ops = {
-            "artmode": lambda v: svc.set_artmode(bool(v)),
+            "artmode": lambda v: svc.set_artmode(bool(v)),  # attempts guarded below
             "brightness": lambda v: svc.set_brightness(int(v)),
             "color_temperature": lambda v: svc.set_color_temperature(int(v)),
             "motion_timer": lambda v: svc.set_motion_timer(str(v)),
@@ -731,8 +747,8 @@ def save_settings(request: Request, db=Depends(dbm.get_db),
 async def branding_logo(file: UploadFile = File(...), db=Depends(dbm.get_db),
                         user=Depends(auth.require_admin)):
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in (".png", ".svg", ".jpg", ".jpeg", ".webp"):
-        raise HTTPException(400, "logo must be png/svg/jpg/webp")
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(400, "logo must be png/jpg/webp")
     name = f"logo{ext}"
     (config.BRAND_DIR / name).write_bytes(await file.read())
     config.set(db, "brand_logo", name)

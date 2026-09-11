@@ -5,9 +5,12 @@ Unsplash, Pexels, Pixabay, Rijksmuseum. Every provider maps to the same shape:
 {id, title, author, thumb, full, link, source}. Imports run through the normal
 ingest pipeline, so they get sRGB/date/dedupe like any upload.
 """
+import ipaddress
 import json
+import socket
 import urllib.parse
 import urllib.request
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -17,6 +20,49 @@ from . import auth, config, db as dbm, worker
 router = APIRouter()
 UA = {"User-Agent": "framevalet/0.2 (self-hosted Frame TV photo manager)"}
 MAX_IMPORT_BYTES = 60_000_000
+
+# Provider host allowlist: an imported URL must resolve to one of these (or a
+# subdomain). Stops the import fetch from being pointed at internal services.
+PROVIDER_HOSTS = {
+    "openverse": ("openverse.org", "githubusercontent.com", "flickr.com",
+                  "staticflickr.com", "wikimedia.org", "rawpixel.com"),
+    "nasa": ("nasa.gov", "apod.nasa.gov"),
+    "reddit": ("redd.it", "redditmedia.com", "reddit.com"),
+    "rijksmuseum": ("rijksmuseum.nl",),
+    "unsplash": ("unsplash.com", "images.unsplash.com"),
+    "pexels": ("pexels.com",),
+    "pixabay": ("pixabay.com",),
+}
+
+
+def _is_public_host(host: str) -> bool:
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
+def _host_allowed(host: str, source: str) -> bool:
+    host = host.lower()
+    return any(host == d or host.endswith("." + d) for d in PROVIDER_HOSTS.get(source, ()))
+
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Re-validate scheme + host public-ness on every redirect hop."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = urlsplit(newurl)
+        if parts.scheme != "https" or not _is_public_host(parts.hostname or ""):
+            raise urllib.error.HTTPError(newurl, code, "blocked redirect target", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_GuardedRedirect)
 
 
 def _get_json(url, headers=None, timeout=15):
@@ -154,7 +200,7 @@ def search(source: str, q: str = "", page: int = 1,
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"{source}: {e}") from e
+        raise HTTPException(502, "the source could not be reached") from e
 
 
 @router.post("/sources/import")
@@ -164,14 +210,19 @@ async def import_image(request: Request, db=Depends(dbm.get_db),
         raise HTTPException(403, "uploads not allowed for this account")
     body = await request.json()
     url, title, source = body.get("url", ""), body.get("title", ""), body.get("source", "")
-    if source not in PROVIDERS or not url.startswith("https://"):
-        raise HTTPException(400, "bad import request")
+    parts = urlsplit(url)
+    if (source not in PROVIDERS or parts.scheme != "https"
+            or not parts.hostname or not _host_allowed(parts.hostname, source)
+            or not _is_public_host(parts.hostname)):
+        raise HTTPException(400, "import URL is not an allowed source host")
     req = urllib.request.Request(url, headers=UA)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _opener.open(req, timeout=60) as r:
             data = r.read(MAX_IMPORT_BYTES + 1)
-    except Exception as e:
-        raise HTTPException(502, f"download failed: {e}") from e
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "could not download the image")
     if len(data) > MAX_IMPORT_BYTES:
         raise HTTPException(413, "image too large")
     name = (title or source)[:80] + ".jpg"

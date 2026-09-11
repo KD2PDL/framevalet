@@ -64,15 +64,15 @@ assert k1 != pipeline.render_key("sha", None, "fit", "1080p", 90, False)
 assert k1 == pipeline.render_key("sha", None, "fit", "4k", 90, False)
 
 # --- auth: create, verify, permissions
-auth.create_user(db, "kevin", "hunter22-long", role="admin", can_delete_any=True)
-auth.create_user(db, "mike", "password-123")
-assert auth.check_login(db, "kevin", "hunter22-long")["role"] == "admin"
-assert auth.check_login(db, "kevin", "wrong") is None
-mike = auth.check_login(db, "MIKE", "password-123")
-assert mike
-assert auth.can_delete(mike, {"uploaded_by": mike["id"], "source": "upload"})
-assert not auth.can_delete(mike, {"uploaded_by": 999, "source": "upload"})
-admin = auth.check_login(db, "kevin", "hunter22-long")
+auth.create_user(db, "alice", "s3cure-pass-1", role="admin", can_delete_any=True)
+auth.create_user(db, "bob", "s3cure-pass-2")
+assert auth.check_login(db, "alice", "s3cure-pass-1")["role"] == "admin"
+assert auth.check_login(db, "alice", "wrong") is None
+bob = auth.check_login(db, "BOB", "s3cure-pass-2")
+assert bob
+assert auth.can_delete(bob, {"uploaded_by": bob["id"], "source": "upload"})
+assert not auth.can_delete(bob, {"uploaded_by": 999, "source": "upload"})
+admin = auth.check_login(db, "alice", "s3cure-pass-1")
 assert auth.can_delete(admin, {"uploaded_by": 999, "source": "upload"})
 
 # --- config: env pins beat db writes

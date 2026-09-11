@@ -26,7 +26,8 @@ log = logging.getLogger("framevalet.worker")
 status = {          # dashboard state
     "tvs": {},      # tv_id -> {ok, error, last_check, pushing}
     "watch": {"last_scan": 0.0, "last_error": "", "seen": 0},
-    "rclone": {"last_sync": 0.0, "last_error": "", "available": bool(shutil.which("rclone"))},
+    "rclone": {"last_sync": 0.0, "last_error": "", "available": bool(shutil.which("rclone")),
+               "healthy": None},   # None=never run, True=last sync ok, False=last failed
 }
 import_state = {"running": False, "tv_id": None, "done": 0, "total": 0, "error": ""}
 
@@ -129,7 +130,7 @@ def _push_tv(db, tv, svc: TVService) -> int:
             pushed += 1
             ws.broadcast({"type": "pushed", "tv_id": tv["id"],
                           "photo_id": row["photo_id"], "filename": row["filename"]})
-        except (TVError, OSError, pipeline.PipelineError) as e:
+        except (TVError, OSError, ValueError, pipeline.PipelineError) as e:
             db.execute(
                 "UPDATE tv_photos SET status='failed', error=? WHERE tv_id=? AND photo_id=?",
                 (str(e)[:300], tv["id"], row["photo_id"]))
@@ -204,10 +205,10 @@ def _fire_schedules(db, tv, svc: TVService):
         pool = db.execute(q + " ORDER BY tp.photo_id", args).fetchall()
         if not pool:
             continue
+        advance = None
         if s["mode"] == "sequential":
             pick = pool[s["cursor"] % len(pool)]
-            db.execute("UPDATE schedules SET cursor=? WHERE id=?",
-                       ((s["cursor"] + 1) % len(pool), s["id"]))
+            advance = (s["cursor"] + 1) % len(pool)
         elif s["mode"] == "favorites":
             weights = [5 if r["favorite"] else 1 for r in pool]
             pick = random.choices(pool, weights=weights, k=1)[0]
@@ -215,6 +216,8 @@ def _fire_schedules(db, tv, svc: TVService):
             pick = random.choice(pool)
         try:
             svc.select(pick["content_id"])
+            if advance is not None:
+                db.execute("UPDATE schedules SET cursor=? WHERE id=?", (advance, s["id"]))
             db.execute("UPDATE schedules SET last_fired=? WHERE id=?",
                        (time.time(), s["id"]))
             db.commit()
@@ -244,7 +247,9 @@ def ingest_bytes(db, data: bytes, filename: str, user_id=None,
     orig = config.ORIGINALS_DIR / f"{pid}.jpg"
     thumb = config.THUMBS_DIR / f"{pid}.jpg"
     meta = pipeline.ingest(data, orig, thumb)
-    cur = db.execute(
+    import sqlite3 as _sqlite3
+    try:
+        cur = db.execute(
         "INSERT INTO photos(filename, sha256, orig_path, thumb_path, width, height, "
         "taken_date, style, source, folder_rel, uploaded_by, created) "
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -252,6 +257,12 @@ def ingest_bytes(db, data: bytes, filename: str, user_id=None,
          meta["width"], meta["height"], meta["taken_date"],
          config.get(db, "default_style"), "folder" if rel else "upload",
          rel, user_id, dbm.now()))
+    except _sqlite3.IntegrityError:      # concurrent upload of the same file won the race
+        db.rollback()
+        for f in (orig, thumb):
+            with contextlib.suppress(OSError):
+                f.unlink()
+        return None
     db.commit()
     assign_photo(db, cur.lastrowid)
     return cur.lastrowid
@@ -278,9 +289,28 @@ def _scan_watch_folder(db):
                 log.warning("watcher skipped %s: %s", rel, e)
     if new_count:
         ws.broadcast({"type": "ingested", "count": new_count})
-    for rel, row in known.items():
-        if rel not in seen:
+
+    # Mirror-delete guard: NEVER let a transient empty/failed sync wipe the library.
+    # 1) if rclone is the source and its last sync failed (or never ran), skip deletes.
+    # 2) refuse a suspicious mass-delete: an empty folder when we had many, or a
+    #    single scan that would remove more than half of folder-tracked photos.
+    to_delete = [row for rel, row in known.items() if rel not in seen]
+    remote = config.get(db, "rclone_remote")
+    rclone_ok = (not remote) or status["rclone"]["healthy"] is True
+    if to_delete and not rclone_ok:
+        log.warning("watcher: skipping %d deletions; rclone sync not healthy",
+                    len(to_delete))
+    elif to_delete and known and (len(seen) == 0 or len(to_delete) > len(known) * 0.5):
+        log.error("watcher: REFUSING mass delete of %d/%d folder photos (folder looks "
+                  "empty or truncated); left library intact. Investigate the watched "
+                  "folder / rclone remote.", len(to_delete), len(known))
+        status["watch"]["last_error"] = (
+            f"refused to delete {len(to_delete)} photos: watched folder looks empty/truncated")
+    else:
+        for row in to_delete:
             delete_photo_everywhere(db, row)
+        if to_delete:
+            status["watch"]["last_error"] = ""
     status["watch"]["last_scan"] = time.time()
 
 
@@ -305,6 +335,18 @@ def delete_photo_everywhere(db, photo):
         if photo[key]:
             with contextlib.suppress(OSError):
                 Path(photo[key]).unlink()
+    # cache renders/previews/crop-thumbs derived from this photo
+    if photo["sha256"]:
+        pk = pipeline.preview_key(photo["sha256"], photo["edits"])
+        for f in (config.RENDERS_DIR / f"preview_{pk}.jpg",
+                  config.THUMBS_DIR / f"crop_{pk}.jpg"):
+            with contextlib.suppress(OSError):
+                f.unlink()
+    for r in db.execute("SELECT render_key FROM tv_photos WHERE photo_id=? "
+                        "AND render_key IS NOT NULL AND render_key != ''",
+                        (photo["id"],)).fetchall():
+        with contextlib.suppress(OSError):
+            (config.RENDERS_DIR / f"{r['render_key']}.jpg").unlink()
     db.execute("DELETE FROM photos WHERE id=?", (photo["id"],))
     db.commit()
 
@@ -315,19 +357,31 @@ def _rclone_sync(db):
         return
     dest = config.WATCH_DIR / "remote"
     dest.mkdir(exist_ok=True)
-    r = subprocess.run(["rclone", "sync", remote, str(dest), "--exclude", ".*/**"],
-                       capture_output=True, text=True, timeout=1800)
+    try:
+        r = subprocess.run(
+            ["rclone", "sync", remote, str(dest), "--exclude", ".*/**",
+             "--max-delete", "50"],
+            capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        status["rclone"]["last_error"] = "sync timed out"
+        status["rclone"]["healthy"] = False
+        log.warning("rclone sync timed out")
+        return
     if r.returncode != 0:
         status["rclone"]["last_error"] = r.stderr.strip()[-300:]
+        status["rclone"]["healthy"] = False
         log.warning("rclone sync failed: %s", r.stderr.strip()[:300])
     else:
         status["rclone"]["last_error"] = ""
+        status["rclone"]["healthy"] = True
         status["rclone"]["last_sync"] = time.time()
 
 
 # ---------------------------------------------------------------- import
 def start_import(tv_id: int):
-    asyncio.get_event_loop().create_task(_import_from_tv(tv_id))
+    if ws._loop is None:
+        raise RuntimeError("worker loop not ready")
+    asyncio.run_coroutine_threadsafe(_import_from_tv(tv_id), ws._loop)
 
 
 async def _import_from_tv(tv_id: int):
@@ -383,9 +437,38 @@ async def _import_from_tv(tv_id: int):
 
 
 # ---------------------------------------------------------------- main loop
+def _sweep_cache(db):
+    """Delete cache files (renders, previews, crop-thumbs) not referenced by any
+    live photo's current key set. Bounded work; runs daily."""
+    keep = set()
+    quality = int(config.get(db, "jpeg_quality"))
+    unsharp = config.get(db, "unsharp") == "true"
+    reslist = {r["output_res"] for r in db.execute("SELECT DISTINCT output_res FROM tvs")} \
+              or {"4k"}
+    for ph in db.execute("SELECT sha256, edits, style FROM photos WHERE sha256 IS NOT NULL"):
+        keep.add(f"preview_{pipeline.preview_key(ph['sha256'], ph['edits'])}.jpg")
+        keep.add(f"crop_{pipeline.preview_key(ph['sha256'], ph['edits'])}.jpg")
+        for res in reslist:
+            keep.add(pipeline.render_key(ph["sha256"], ph["edits"], ph["style"],
+                                         res, quality, unsharp) + ".jpg")
+    for r in db.execute("SELECT render_key FROM tv_photos WHERE render_key IS NOT NULL "
+                        "AND render_key != ''"):
+        keep.add(r["render_key"] + ".jpg")
+    removed = 0
+    for d in (config.RENDERS_DIR, config.THUMBS_DIR):
+        for f in d.glob("*.jpg"):
+            if f.name.startswith(("preview_", "crop_")) or (
+                    d == config.RENDERS_DIR and len(f.stem) == 40):  # render_key = sha1
+                if f.name not in keep:
+                    with contextlib.suppress(OSError):
+                        f.unlink(); removed += 1
+    if removed:
+        log.info("cache sweep removed %d orphaned files", removed)
+
+
 async def run():
     log.info("worker started")
-    last_watch = last_rclone = 0.0
+    last_watch = last_rclone = last_sweep = 0.0
     while True:
         db = dbm.connect()
         try:
@@ -398,6 +481,10 @@ async def run():
                time.time() - last_watch > int(config.get(db, "watch_interval")):
                 await asyncio.to_thread(_scan_watch_folder, db)
                 last_watch = time.time()
+
+            if time.time() - last_sweep > 86400:      # daily orphan-cache sweep
+                await asyncio.to_thread(_sweep_cache, db)
+                last_sweep = time.time()
 
             for tv in db.execute("SELECT * FROM tvs WHERE enabled=1").fetchall():
                 st = tv_status(tv["id"])

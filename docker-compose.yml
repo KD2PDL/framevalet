@@ -1,6 +1,6 @@
 services:
   framevalet:
-    image: ghcr.io/KD2PDL/framevalet:latest
+    image: ghcr.io/kd2pdl/framevalet:latest
     container_name: framevalet
     restart: unless-stopped
     ports:

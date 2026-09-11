@@ -170,30 +170,30 @@ class TVService:
         return out
 
     def set_artmode(self, on: bool):
-        self._call(lambda a: a.set_artmode(on))
+        self._call(lambda a: a.set_artmode(on), attempts=1)
 
     def set_brightness(self, value: int):
         if value not in BRIGHTNESS_RANGE:
             raise ValueError("brightness must be 0-10")
-        self._call(lambda a: a.set_brightness(value))
+        self._call(lambda a: a.set_brightness(value), attempts=1)
 
     def set_color_temperature(self, value: int):
         if value not in COLOR_TEMP_RANGE:
             raise ValueError("color temperature must be -5 to 5")
-        self._call(lambda a: a.set_color_temperature(value))
+        self._call(lambda a: a.set_color_temperature(value), attempts=1)
 
     def set_motion_timer(self, value: str):
         if value not in MOTION_TIMER_VALUES:
             raise ValueError(f"motion timer must be one of {MOTION_TIMER_VALUES}")
-        self._call(lambda a: a.set_motion_timer(value))
+        self._call(lambda a: a.set_motion_timer(value), attempts=1)
 
     def set_motion_sensitivity(self, value: str):
         if value not in MOTION_SENSITIVITY:
             raise ValueError("sensitivity must be 1-3")
-        self._call(lambda a: a.set_motion_sensitivity(value))
+        self._call(lambda a: a.set_motion_sensitivity(value), attempts=1)
 
     def set_brightness_sensor(self, on: bool):
-        self._call(lambda a: a.set_brightness_sensor_setting(on))
+        self._call(lambda a: a.set_brightness_sensor_setting(on), attempts=1)
 
     def slideshow(self) -> dict:
         return self._call(lambda a: a.get_slideshow_status())
@@ -202,7 +202,7 @@ class TVService:
         if minutes not in SLIDESHOW_PRESETS:
             raise ValueError(f"duration must be one of {SLIDESHOW_PRESETS}")
         self._call(lambda a: a.set_slideshow_status(
-            duration=minutes, type=shuffle, category=2))
+            duration=minutes, type=shuffle, category=2), attempts=1)
 
     def wake(self, mac: str):
         """Wake-on-LAN magic packet (no dependency needed)."""
