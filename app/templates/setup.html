@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <h1>Welcome to {{ brand.name }}</h1>
+    <p class="muted">First run: create the admin account for this Frame TV library.</p>
+    {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+    <form method="post" action="/setup" class="stack">
+      <label>Username
+        <input type="text" name="username" required autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" name="password" required minlength="8" autocomplete="new-password">
+        <span class="hint">At least 8 characters</span>
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Create admin account</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

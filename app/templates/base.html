@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ brand.name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>:root { --accent: {{ brand.accent }}; }</style>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="site-head">
+  <div class="head-inner">
+    <a class="brand" href="/">
+      {% if brand.logo_url %}
+        <img src="{{ brand.logo_url }}" alt="{{ brand.name }}">
+      {% else %}
+        <span class="brand-name">{{ brand.name }}</span>
+      {% endif %}
+    </a>
+    <span id="tvPill" class="pill {{ 'pill-ok' if tv.tv_ok else 'pill-warn' }}" title="Frame TV status">
+      <span class="pill-dot"></span>
+      <span id="tvPillText">{{ 'TV connected' if tv.tv_ok else (tv.tv_error or 'TV not connected') }}</span>
+    </span>
+    {% if user %}
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Photos</a>
+      {% if user.role == 'admin' %}
+      <a href="/doctor" class="{{ 'active' if request.url.path == '/doctor' else '' }}">TV Doctor</a>
+      <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">Admin</a>
+      {% endif %}
+    </nav>
+    <form method="post" action="/logout" class="logout-form">
+      <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

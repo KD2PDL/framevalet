@@ -1,0 +1,30 @@
+[project]
+name = "framevalet"
+version = "0.1.0"
+description = "Self-hosted, multi-user photo manager for Samsung Frame TVs: family uploads from any device, optimized and pushed to Art Mode."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "pillow>=10.4",
+    "pillow-heif>=0.18",
+    "argon2-cffi>=23.1",
+    # Pinned exactly: two DIFFERENT codebases publish under this name/version
+    # (PyPI xchwarze vs the NickWaterton fork). This pin is the one verified
+    # against a real 2025 Frame (QN55LS03H). Evaluate the fork deliberately.
+    "samsungtvws==3.0.5",
+]
+
+[project.scripts]
+framevalet = "app.main:run"
+
+[tool.setuptools]
+packages = ["app"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

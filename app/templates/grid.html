@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if user.can_upload %}
+<section class="upload-zone" id="dropZone">
+  <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif" hidden>
+  <button type="button" class="btn btn-primary btn-big" id="uploadBtn">Add photos</button>
+  <p class="upload-hint">or drag pictures here. They go straight to the Frame</p>
+  <ul class="upload-results" id="uploadResults" hidden></ul>
+</section>
+{% endif %}
+
+<div class="statusline">
+  <span id="countsLine">{{ counts.on_tv }} on TV &middot; {{ counts.queued }} queued{% if counts.processing %} &middot; {{ counts.processing }} processing{% endif %}{% if counts.failed %} &middot; {{ counts.failed }} failed{% endif %}</span>
+  <span id="importLine" class="import-line" {% if not import_state.running %}hidden{% endif %}>Importing from TV: <span id="importProgress">{{ import_state.done }}/{{ import_state.total }}</span></span>
+</div>
+
+<div class="chips" id="filterChips">
+  <button type="button" class="chip active" data-filter="all">All</button>
+  <button type="button" class="chip" data-filter="on_tv">On TV</button>
+  <button type="button" class="chip" data-filter="queued">Queued</button>
+  <button type="button" class="chip" data-filter="failed">Failed</button>
+  <button type="button" class="chip" data-filter="external">External</button>
+</div>
+
+<div class="grid" id="photoGrid">
+  {% for p in photos %}
+  <figure class="card" tabindex="0" role="button"
+    data-id="{{ p.id }}"
+    data-status="{{ p.status }}"
+    data-source="{{ p.source }}"
+    data-filename="{{ p.filename }}"
+    data-taken="{{ p.taken_date or '' }}"
+    data-uploader="{{ p.uploader or '' }}"
+    data-candelete="{{ '1' if p.can_delete else '0' }}"
+    data-thumb="{{ '1' if p.thumb_path else '0' }}">
+    {% if p.thumb_path %}
+    <img src="/thumbs/{{ p.id }}.jpg" alt="{{ p.filename }}" loading="lazy">
+    {% else %}
+    <div class="card-placeholder"><span>{{ p.filename }}</span></div>
+    {% endif %}
+    {% if p.source == 'external' %}
+    <span class="badge badge-external"><span class="dot"></span>external</span>
+    {% elif p.status == 'on_tv' %}
+    <span class="badge badge-ontv"><span class="dot"></span>on TV</span>
+    {% elif p.status == 'failed' %}
+    <span class="badge badge-failed"><span class="dot"></span>failed</span>
+    {% elif p.status == 'processing' %}
+    <span class="badge badge-queued"><span class="dot"></span>processing</span>
+    {% else %}
+    <span class="badge badge-queued"><span class="dot"></span>queued</span>
+    {% endif %}
+  </figure>
+  {% endfor %}
+</div>
+{% if not photos %}
+<div class="empty-state">
+  <p>No photos yet.</p>
+  {% if user.can_upload %}<p class="muted">Tap <strong>Add photos</strong> above to get started.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="overlay" id="overlay" hidden>
+  <div class="overlay-backdrop" id="overlayBackdrop"></div>
+  <div class="overlay-panel" role="dialog" aria-modal="true">
+    <button type="button" class="overlay-close" id="overlayClose" aria-label="Close">&times;</button>
+    <div class="overlay-imgwrap"><img id="overlayImg" alt=""></div>
+    <div class="overlay-meta">
+      <strong id="ovName"></strong>
+      <span class="muted" id="ovTaken"></span>
+      <span class="muted" id="ovUploader"></span>
+    </div>
+    <div class="overlay-actions">
+      <button type="button" class="btn btn-primary" id="ovDisplay" hidden>Show on TV now</button>
+      <button type="button" class="btn btn-danger" id="ovDelete" hidden>Delete</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

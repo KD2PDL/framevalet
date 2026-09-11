@@ -1,0 +1,18 @@
+services:
+  framevalet:
+    image: ghcr.io/kdsystemsinc/framevalet:latest
+    container_name: framevalet
+    restart: unless-stopped
+    ports:
+      - "8470:8470"
+    volumes:
+      - ./data:/data
+    # All configuration can be done in the web UI (admin panel).
+    # Optionally pin settings here instead; env always wins over the UI:
+    # environment:
+    #   TV_HOST: 192.168.1.50
+    #   TV_CLIENT_NAME: framevalet
+    #   TV_TOKEN: "paste from Admin > Export connection to migrate without re-pairing"
+    #   ADMIN_USER: admin          # headless first-boot bootstrap
+    #   ADMIN_PASSWORD: change-me
+    #   BRAND_NAME: My Family Frame

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Admin</h1>
+  <nav class="anchor-nav">
+    <a href="#users">Users</a>
+    <a href="#settings">Settings</a>
+  </nav>
+</div>
+
+<section id="users" class="admin-section">
+  <h2>Users</h2>
+  <div class="table-scroll">
+    <table class="table">
+      <thead>
+        <tr><th>User</th><th>Role</th><th>Flags</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td><strong>{{ u.username }}</strong></td>
+          <td>{{ u.role }}</td>
+          <td class="flag-cell">
+            {% if u.disabled %}<span class="tag tag-red">disabled</span>{% endif %}
+            {% if u.can_upload %}<span class="tag">upload</span>{% endif %}
+            {% if u.can_delete_any %}<span class="tag">delete any</span>{% endif %}
+          </td>
+          <td class="action-cell">
+            <form method="post" action="/admin/users/{{ u.id }}">
+              <input type="hidden" name="action" value="toggle_disabled">
+              <button class="btn btn-sm">{{ 'Enable' if u.disabled else 'Disable' }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}">
+              <input type="hidden" name="action" value="toggle_upload">
+              <button class="btn btn-sm">{{ 'Revoke upload' if u.can_upload else 'Allow upload' }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}">
+              <input type="hidden" name="action" value="toggle_delete_any">
+              <button class="btn btn-sm">{{ 'Revoke delete-any' if u.can_delete_any else 'Allow delete-any' }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}" class="inline-pw">
+              <input type="hidden" name="action" value="set_password">
+              <input type="password" name="password" placeholder="New password" minlength="8" required>
+              <button class="btn btn-sm">Set</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}" data-confirm="Delete user {{ u.username }}? This cannot be undone.">
+              <input type="hidden" name="action" value="delete">
+              <button class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3>New user</h3>
+    <form method="post" action="/admin/users" class="new-user-form">
+      <label>Username <input type="text" name="username" required></label>
+      <label>Password <input type="password" name="password" minlength="8" required></label>
+      <label>Role
+        <select name="role">
+          <option value="member" selected>member</option>
+          <option value="admin">admin</option>
+        </select>
+      </label>
+      <label class="check-label"><input type="checkbox" name="can_upload" value="true" checked> Can upload</label>
+      <label class="check-label"><input type="checkbox" name="can_delete_any" value="true"> Can delete anyone's photos</label>
+      <button class="btn btn-primary">Create user</button>
+    </form>
+  </div>
+</section>
+
+<section id="settings" class="admin-section">
+  <h2>Settings</h2>
+
+  <div class="settings-grid">
+    {% set fields = [
+      ('tv_host', 'TV host', 'text'),
+      ('tv_client_name', 'TV client name', 'text'),
+      ('tv_mac', 'TV MAC address', 'text'),
+      ('default_matte', 'Default matte', 'text'),
+      ('jpeg_quality', 'JPEG quality', 'number'),
+      ('keep_originals', 'Keep original files', 'bool'),
+      ('brand_name', 'Brand name', 'text'),
+      ('brand_accent', 'Accent color', 'color'),
+      ('reconcile_minutes', 'Reconcile every (minutes)', 'number'),
+    ] %}
+    {% for key, label, kind in fields %}
+    {% set s = settings[key] %}
+    <form method="post" action="/admin/settings" class="setting-row">
+      <input type="hidden" name="key" value="{{ key }}">
+      <label>{{ label }}
+        {% if s.env_pinned %}<span class="tag tag-pin">set by {{ s.env_var }}</span>{% endif %}
+        {% if kind == 'bool' %}
+        <select name="value" {% if s.env_pinned %}disabled{% endif %}>
+          <option value="true" {% if s.value == 'true' %}selected{% endif %}>true</option>
+          <option value="false" {% if s.value != 'true' %}selected{% endif %}>false</option>
+        </select>
+        {% elif kind == 'color' %}
+        <input type="color" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
+        {% elif kind == 'number' %}
+        <input type="number" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
+        {% else %}
+        <input type="text" name="value" value="{{ s.value or '' }}" {% if s.env_pinned %}disabled{% endif %}>
+        {% endif %}
+      </label>
+      {% if not s.env_pinned %}<button class="btn btn-sm">Save</button>{% endif %}
+    </form>
+    {% endfor %}
+  </div>
+
+  <div class="panel">
+    <h3>Brand logo</h3>
+    <form method="post" action="/admin/branding-logo" enctype="multipart/form-data" class="row-form">
+      <input type="file" name="file" accept=".png,.svg,.jpg,.jpeg,.webp" required>
+      <button class="btn btn-sm">Upload logo</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3>Slideshow</h3>
+    <form method="post" action="/admin/slideshow" class="row-form">
+      <label>Change photo
+        <select name="minutes">
+          {% for m in presets %}
+          <option value="{{ m }}" {% if slideshow and slideshow.get('duration')|string == m|string %}selected{% endif %}>
+            {{ 'Off' if m == 0 else 'Every ' ~ m ~ ' min' }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="check-label"><input type="checkbox" name="shuffle" value="true" {% if slideshow and slideshow.get('shuffle') %}checked{% endif %}> Shuffle</label>
+      <button class="btn btn-sm">Apply</button>
+    </form>
+    {% if not slideshow %}<p class="muted">TV not reachable right now; current slideshow state unknown.</p>{% endif %}
+  </div>
+
+  <div class="panel">
+    <h3>Import photos from TV</h3>
+    <p class="muted">Adopts everything already on the TV into the library, so it can be managed here.</p>
+    <form method="post" action="/admin/import-tv">
+      <button class="btn btn-primary">Import photos from TV</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3>Export connection</h3>
+    <p class="muted">Move this connection to another machine without re-pairing.</p>
+    <textarea readonly rows="3" id="exportEnv" class="export-box">{{ export_env }}</textarea>
+    <button type="button" class="btn btn-sm" data-copy="#exportEnv">Copy to clipboard</button>
+  </div>
+</section>
+{% endblock %}
