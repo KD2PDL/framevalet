@@ -69,12 +69,31 @@ async def ws_endpoint(websocket: WebSocket):
     if not row:
         await websocket.close(code=4401)
         return
+    from .security import same_origin
+    scheme = "https" if websocket.url.scheme == "wss" else "http"
+    if not same_origin(websocket.headers.get("origin"), scheme,
+                       websocket.headers.get("host")):
+        await websocket.close(code=4403)
+        return
     await websocket.accept()
     _clients.add(websocket)
     try:
         while True:
-            # Client sends pings/keepalives; we don't care about content.
-            await websocket.receive_text()
+            # Client sends pings/keepalives; also re-validate the session so an
+            # expired/disabled login is dropped promptly.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(websocket.receive_text(), timeout=25)
+            vdb = dbm.connect()
+            try:
+                ok = vdb.execute(
+                    "SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id "
+                    "WHERE s.token=? AND s.expires>? AND u.disabled=0",
+                    (token, dbm.now())).fetchone()
+            finally:
+                vdb.close()
+            if not ok:
+                await websocket.close(code=4401)
+                break
     except WebSocketDisconnect:
         pass
     except Exception:

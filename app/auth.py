@@ -9,7 +9,7 @@ from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from . import db as dbm
+from . import config, db as dbm
 
 ph = PasswordHasher()
 _DUMMY_HASH = ph.hash("timing-equalization-placeholder")
@@ -74,7 +74,7 @@ def end_session(db, token):
 
 def set_cookie(resp, token):
     resp.set_cookie(COOKIE, token, max_age=SESSION_DAYS * 86400,
-                    httponly=True, samesite="lax", path="/")
+                    httponly=True, secure=config.COOKIE_SECURE, samesite="lax", path="/")
 
 
 def user_from_request(request: Request, db: sqlite3.Connection):

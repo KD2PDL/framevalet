@@ -5,7 +5,7 @@ import json
 import json as _json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -28,7 +28,7 @@ def render_page(request, db, name, user=None, **ctx):
     else:
         logo_url = None
     tvs = [dict(t) | {"status": worker.tv_status(t["id"])}
-           for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall()]
+           for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall()] if user else []
     static = Path(__file__).parent / "static"
     try:  # mtime-based cache busting: any asset edit invalidates browser caches
         asset_v = int(max((static / f).stat().st_mtime for f in ("app.js", "style.css")))
@@ -81,7 +81,7 @@ def login_page(request: Request, db=Depends(dbm.get_db)):
 @router.post("/login")
 def login_post(request: Request, username: str = Form(...), password: str = Form(...),
                db=Depends(dbm.get_db)):
-    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    ip = request.client.host if request.client else "?"
     if auth.rate_limited(ip):
         return render_page(request, db, "login.html",
                            error="Too many attempts. Wait a few minutes and try again.")
@@ -158,9 +158,10 @@ async def upload(request: Request, files: list[UploadFile] = File(...),
         raise HTTPException(403, "uploads not allowed for this account")
     if len(files) > 200:
         raise HTTPException(413, "too many files in one upload (max 200)")
+    import asyncio
     results = []
     for f in files:
-        data = await f.read()
+        data = await f.read(80_000_001)
         if len(data) > 80_000_000:          # 80 MB per photo is generous for 4K
             results.append({"file": (f.filename or "photo")[:80], "ok": False,
                             "error": "file too large (max 80 MB)"})
@@ -170,7 +171,8 @@ async def upload(request: Request, files: list[UploadFile] = File(...),
             results.append({"file": name, "ok": False, "error": "unsupported format"})
             continue
         try:
-            pid = worker.ingest_bytes(db, data, filename=name, user_id=user["id"])
+            pid = await asyncio.to_thread(worker.ingest_bytes, db, data,
+                                          filename=name, user_id=user["id"])
         except pipeline.PipelineError as e:
             results.append({"file": name, "ok": False, "error": str(e)})
             continue
@@ -202,9 +204,8 @@ def favorite(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
 
 
 @router.post("/photo/{pid}/tags")
-async def set_tags(pid: int, request: Request, db=Depends(dbm.get_db),
+def set_tags(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
                    user=Depends(auth.current_user)):
-    body = await request.json()
     names = [t.strip() for t in body.get("tags", []) if t.strip()][:20]
     db.execute("DELETE FROM photo_tags WHERE photo_id=?", (pid,))
     for n in names:
@@ -218,7 +219,7 @@ async def set_tags(pid: int, request: Request, db=Depends(dbm.get_db),
 
 
 @router.post("/photo/{pid}/crop")
-async def save_crop(pid: int, request: Request, db=Depends(dbm.get_db),
+def save_crop(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
                     user=Depends(auth.current_user)):
     """Body: {"crop": [x,y,w,h] normalized 0..1} or {"crop": null} to clear.
     The push loop notices the stale render_key and re-pushes automatically."""
@@ -227,7 +228,6 @@ async def save_crop(pid: int, request: Request, db=Depends(dbm.get_db),
         raise HTTPException(404)
     if not p["orig_path"]:
         raise HTTPException(400, "no original stored for this photo; crop unavailable")
-    body = await request.json()
     crop = body.get("crop")
     if crop is not None:
         if (not isinstance(crop, list) or len(crop) != 4
@@ -258,13 +258,14 @@ def set_style(pid: int, style: str = Form(...), db=Depends(dbm.get_db),
 
 
 @router.post("/photo/{pid}/matte")
-async def set_matte(pid: int, request: Request, db=Depends(dbm.get_db),
+def set_matte(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
                     user=Depends(auth.current_user)):
     """Body: {"matte": "type_color"} or {"matte": null} for TV default.
     Applied live via change_matte where the photo is already on a TV; queued
     copies pick it up at push time."""
-    body = await request.json()
     matte = body.get("matte")
+    if matte is not None and not isinstance(matte, str):
+        raise HTTPException(400, "matte must be a string or null")
     if matte:
         try:
             mtype, mcolor = matte.split("_", 1)
@@ -306,14 +307,13 @@ async def set_matte(pid: int, request: Request, db=Depends(dbm.get_db),
 
 
 @router.post("/photo/{pid}/meta")
-async def set_meta(pid: int, request: Request, db=Depends(dbm.get_db),
+def set_meta(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
                    user=Depends(auth.current_user)):
     """Body: {"filename"?: str, "taken_date"?: "YYYY-MM-DD[THH:MM]" or ""}.
     A date change forces a re-push (the TV stores the date at upload time)."""
     p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
     if not p:
         raise HTTPException(404)
-    body = await request.json()
     if "filename" in body:
         name = str(body["filename"]).strip()[:120]
         if not name:
@@ -365,9 +365,8 @@ def display_photo(pid: int, tv_id: int, db=Depends(dbm.get_db),
 
 
 @router.post("/photos/bulk")
-async def bulk(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+def bulk(body: dict = Body(...), db=Depends(dbm.get_db), user=Depends(auth.current_user)):
     """Body: {"ids":[...], "action": "...", "param": ...}"""
-    body = await request.json()
     ids = [int(i) for i in body.get("ids", [])][:2000]
     action = body.get("action")
     param = body.get("param")
@@ -622,11 +621,10 @@ def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_ad
 
 
 @router.post("/tvs/{tv_id}/artmode")
-async def artmode_set(tv_id: int, request: Request, db=Depends(dbm.get_db),
+def artmode_set(tv_id: int, body: dict = Body(...), db=Depends(dbm.get_db),
                       user=Depends(auth.require_admin)):
     """Body: one or more of {artmode, brightness, color_temperature, motion_timer,
     motion_sensitivity, brightness_sensor, slideshow_minutes, slideshow_shuffle}."""
-    body = await request.json()
     svc = TVService(_tv(db, tv_id))
     if not svc.port_open():
         svc.reset()

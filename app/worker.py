@@ -36,7 +36,11 @@ _reconciled: dict[int, float] = {}
 
 
 def kick():
-    _wakeup.set()
+    # signalled from request threads; asyncio.Event.set() must run on the loop
+    if ws._loop is not None:
+        ws._loop.call_soon_threadsafe(_wakeup.set)
+    else:
+        _wakeup.set()
 
 
 def _set_tv_state(st: dict, tv_id: int, ok: bool, error: str):

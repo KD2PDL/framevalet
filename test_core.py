@@ -97,3 +97,24 @@ row = db.execute("SELECT status FROM tv_photos WHERE photo_id=?", (pid,)).fetcho
 assert row and row["status"] == "queued"
 
 print("all core checks passed")
+
+# --- audit regressions (2026-09-11) -----------------------------------------
+# matte type validation helper is in routes; test the pure validation shape here
+from app import config as _cfg
+_cfg.set(db, "jpeg_quality", "90")
+try:
+    _cfg.set(db, "jpeg_quality", "not-a-number"); raise AssertionError("int validation missing")
+except ValueError:
+    pass
+try:
+    _cfg.set(db, "brand_accent", "red; }body{}"); raise AssertionError("accent validation missing")
+except ValueError:
+    pass
+# login rate limiter is keyed on a value, not header-spoofable (unit-level)
+from app import auth as _auth
+_auth._login_fails.clear()
+for _ in range(_auth.LOGIN_MAX):
+    _auth.note_login_failure("1.2.3.4")
+assert _auth.rate_limited("1.2.3.4")
+assert not _auth.rate_limited("5.6.7.8")   # a different client is unaffected
+print("audit regressions passed")

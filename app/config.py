@@ -45,6 +45,7 @@ SEED_TV_CLIENT = os.environ.get("TV_CLIENT_NAME", "framevalet")
 SEED_TV_TOKEN = os.environ.get("TV_TOKEN", "")
 
 APP_SECRET = os.environ.get("APP_SECRET", "")
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 BOOTSTRAP_ADMIN_USER = os.environ.get("ADMIN_USER", "")
 BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 PORT = int(os.environ.get("PORT", "8470"))
@@ -85,6 +86,13 @@ def set(db, key: str, value: str):
         raise ValueError("accent must be a hex color like #b8892f")
     if key == "rclone_remote" and value.startswith("-"):
         raise ValueError("rclone remote cannot start with '-'")
+    if key in ("jpeg_quality", "reconcile_minutes", "watch_interval", "rclone_interval"):
+        try:
+            n = int(value)
+        except ValueError:
+            raise ValueError(f"{key} must be an integer")
+        if n < 1 or (key == "jpeg_quality" and n > 100):
+            raise ValueError(f"{key} is out of range")
     db.execute(
         "INSERT INTO settings(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))

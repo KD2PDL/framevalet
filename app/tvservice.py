@@ -59,6 +59,7 @@ class TVService:
         self.host = tv_row["host"]
         self.client_name = tv_row["client_name"]
         self._tv = None
+        self._art_client = None
 
     # -- connection -------------------------------------------------------
     def _art(self, timeout=30):
@@ -66,12 +67,18 @@ class TVService:
             self._tv = SamsungTVWS(host=self.host, port=8002,
                                    token_file=str(config.token_path(self.tv_id)),
                                    timeout=timeout, name=self.client_name)
-        return self._tv.art()
+        if self._art_client is None:   # art() opens its own socket; cache + close it
+            self._art_client = self._tv.art()
+        return self._art_client
 
     def reset(self):
         with contextlib.suppress(Exception):
+            if self._art_client:
+                self._art_client.close()
+        with contextlib.suppress(Exception):
             if self._tv:
                 self._tv.close()
+        self._art_client = None
         self._tv = None
 
     def _call(self, fn, *args, attempts=4, **kwargs):
@@ -89,7 +96,8 @@ class TVService:
                     raise TVUnauthorized(
                         "connection timed out: pairing popup unanswered or suppressed") from e
                 self.reset()
-                time.sleep(5 * (i + 1))
+                if i + 1 < attempts:
+                    time.sleep(5 * (i + 1))
         raise TVError(str(last)) from last
 
     # -- diagnostics ("TV Doctor") ---------------------------------------

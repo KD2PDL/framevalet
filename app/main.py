@@ -38,6 +38,8 @@ def create_app() -> FastAPI:
     app.include_router(routes.router)
     app.include_router(sources.router)
     app.include_router(ws.router)
+    from .security import RequestGuard
+    app.add_middleware(RequestGuard)
     app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"),
               name="static")
 
@@ -47,6 +49,11 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "same-origin")
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+        if request.cookies.get(auth.COOKIE) or request.url.path in ("/login", "/setup"):
+            resp.headers["Cache-Control"] = "no-store"
         return resp
 
     @app.exception_handler(307)

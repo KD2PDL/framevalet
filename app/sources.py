@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import auth, config, db as dbm, worker
@@ -204,11 +204,10 @@ def search(source: str, q: str = "", page: int = 1,
 
 
 @router.post("/sources/import")
-async def import_image(request: Request, db=Depends(dbm.get_db),
-                       user=Depends(auth.current_user)):
+def import_image(body: dict = Body(...), db=Depends(dbm.get_db),
+                 user=Depends(auth.current_user)):
     if not user["can_upload"]:
         raise HTTPException(403, "uploads not allowed for this account")
-    body = await request.json()
     url, title, source = body.get("url", ""), body.get("title", ""), body.get("source", "")
     parts = urlsplit(url)
     if (source not in PROVIDERS or parts.scheme != "https"
