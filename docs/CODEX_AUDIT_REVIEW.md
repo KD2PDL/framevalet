@@ -21,13 +21,13 @@ Art Mode guards, upload caps, login rate-limit, security headers).
 | 8 | **Low** | **Session cookie `Secure` not settable.** Correct default for LAN HTTP, but no way to turn it on behind TLS. | `config.py`, `auth.py` | `COOKIE_SECURE` env (default off). |
 | 9 | **Low** | **CSP / clickjacking.** X-Frame-Options was set but no CSP `frame-ancestors`; authed pages were cacheable. | `main.py` | Add `Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'`; `Cache-Control: no-store` on authed pages. |
 | 10 | **Low** | **Retry sleeps after the final attempt.** `_call` slept `5*(i+1)s` even on the last failed attempt, adding latency to every hard failure. | `tvservice.py` | Skip the sleep on the last iteration. |
+| 12 | **Design** | **Folder watcher made non-destructive** (updated decision, 2026-09-11). Originally kept as guarded-mirror; on reflection, add-only removes the whole data-loss class: a file leaving the folder never deletes anything, deletions are explicit in the UI. Regression-tested (empty folder deletes nothing). | `worker.py` `_scan_watch_folder`, README | Import new files only; report missing count for visibility. |
 | 11 | **Low** | **Matte value not type-checked.** A non-string matte in crafted JSON reached `.split()`. | `routes.py` | `_validate_matte` type + value check, shared by single and bulk. |
 
 ## Considered — NOT adopted (with reason)
 
 | Finding | Codex's change | Why not adopted |
 |---------|----------------|-----------------|
-| Folder-watcher mirror is a data-loss risk | Made the watcher **fully non-destructive** (never deletes from folder; only reports missing count) | You explicitly chose **full-mirror** semantics ("removed from folder = removed from library and TV"). Claude's first pass already added guards that block the *catastrophic* case (empty/failed/>50% delete) while still honoring a legitimate single deletion. Keeping guarded-mirror honors your requirement; Codex's stance is the more conservative option if you later prefer it. Documented in README as a tradeoff. |
 | Import-from-TV push path concurrency | Complex `BEGIN IMMEDIATE` re-check of latest edits mid-push | Real but low-probability (a crop saved in the exact window of an in-flight push to that TV). Claude's render-key staleness already forces a corrective re-push on the next loop, so the outcome self-heals. Deferred to avoid importing a large, hard-to-review transaction rework. |
 
 ## Verified clean by both audits

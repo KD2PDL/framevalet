@@ -32,10 +32,12 @@ everything in sync, even when the TV is off.
 - **App-driven schedules** per TV: rotate the displayed photo on an interval,
   random / sequential / favorites-weighted, with optional time-of-day windows,
   day-of-week filters, and tag filters.
-- **Folder watcher with mirror semantics**: point it at a folder; files that
-  appear are ingested and pushed, files that disappear are removed from the
-  library and TVs. Pair it with rclone for **OneDrive/Google Drive/Dropbox**
-  sync: drop a photo in a cloud folder, it shows up on the wall.
+- **Folder watcher (add-only)**: point it at a folder; files that appear are
+  ingested and pushed to the TVs. Removing a file from the folder never deletes
+  anything (a transient empty or failed cloud sync can't wipe your library);
+  you remove photos explicitly in the app. Pair it with rclone for
+  **OneDrive/Google Drive/Dropbox** sync: drop a photo in a cloud folder, it
+  shows up on the wall.
 - **External sources**: browse and import from Openverse, NASA APOD, and
   Reddit out of the box; Unsplash, Pexels, Pixabay, and Rijksmuseum with free
   API keys.
@@ -92,9 +94,10 @@ with rclone preinstalled.
    `onedrive`.
 2. Admin > Settings: set **rclone remote** to `onedrive:Frame TV Photos` and
    enable the **folder watcher**.
-3. Done. FrameValet syncs the folder on an interval and mirrors it: photos
-   added to the folder are processed and pushed; photos removed from the
-   folder are removed from the TVs and library.
+3. Done. FrameValet syncs the folder on an interval: photos added to the folder
+   are processed and pushed to the TVs. It is add-only, removing a file from the
+   folder leaves your library and TVs untouched, so a bad sync can't erase
+   anything; delete photos in the app when you want them gone.
 
 ## Requirements and honest caveats
 

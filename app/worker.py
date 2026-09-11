@@ -1,5 +1,5 @@
 """Background engine: per-TV push queues, reconcile, app-side schedules,
-folder watcher (mirror semantics), and the rclone sync runner.
+folder watcher (non-destructive import), and the rclone sync runner.
 
 Queue-first is the whole point: uploads always succeed instantly; a TV being
 off just means "queued" until it isn't. All state lives in the DB, so a
@@ -273,8 +273,11 @@ def ingest_bytes(db, data: bytes, filename: str, user_id=None,
 
 
 def _scan_watch_folder(db):
-    """Mirror semantics: folder contents are the source of truth for
-    source='folder' photos. New files ingest; missing files delete."""
+    """Non-destructive import: new files in the watched folder are ingested and
+    pushed. A file DISAPPEARING from the folder NEVER deletes anything -- a
+    transient empty/failed cloud sync or an unmounted share can't wipe the
+    library. Removing a photo is always an explicit action in the UI.
+    (A count of missing source files is surfaced for visibility only.)"""
     root = config.WATCH_DIR
     seen = {}
     for f in sorted(root.rglob("*")):
@@ -282,39 +285,22 @@ def _scan_watch_folder(db):
             seen[str(f.relative_to(root))] = f
     status["watch"]["seen"] = len(seen)
     known = {r["folder_rel"]: r for r in db.execute(
-        "SELECT * FROM photos WHERE source='folder'")}
+        "SELECT folder_rel FROM photos WHERE source='folder' AND folder_rel IS NOT NULL")}
     new_count = 0
     for rel, f in seen.items():
         if rel not in known:
             try:
                 if ingest_file(db, f, rel) is not None:
                     new_count += 1
-            except pipeline.PipelineError as e:
+            except (pipeline.PipelineError, OSError) as e:
                 log.warning("watcher skipped %s: %s", rel, e)
     if new_count:
         ws.broadcast({"type": "ingested", "count": new_count})
 
-    # Mirror-delete guard: NEVER let a transient empty/failed sync wipe the library.
-    # 1) if rclone is the source and its last sync failed (or never ran), skip deletes.
-    # 2) refuse a suspicious mass-delete: an empty folder when we had many, or a
-    #    single scan that would remove more than half of folder-tracked photos.
-    to_delete = [row for rel, row in known.items() if rel not in seen]
-    remote = config.get(db, "rclone_remote")
-    rclone_ok = (not remote) or status["rclone"]["healthy"] is True
-    if to_delete and not rclone_ok:
-        log.warning("watcher: skipping %d deletions; rclone sync not healthy",
-                    len(to_delete))
-    elif to_delete and known and (len(seen) == 0 or len(to_delete) > len(known) * 0.5):
-        log.error("watcher: REFUSING mass delete of %d/%d folder photos (folder looks "
-                  "empty or truncated); left library intact. Investigate the watched "
-                  "folder / rclone remote.", len(to_delete), len(known))
-        status["watch"]["last_error"] = (
-            f"refused to delete {len(to_delete)} photos: watched folder looks empty/truncated")
-    else:
-        for row in to_delete:
-            delete_photo_everywhere(db, row)
-        if to_delete:
-            status["watch"]["last_error"] = ""
+    missing = sum(rel not in seen for rel in known)
+    status["watch"]["last_error"] = (
+        f"{missing} source file(s) no longer in the folder; photos kept "
+        "(remove them in the app if you want them gone)" if missing else "")
     status["watch"]["last_scan"] = time.time()
 
 

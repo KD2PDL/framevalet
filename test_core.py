@@ -118,3 +118,19 @@ for _ in range(_auth.LOGIN_MAX):
 assert _auth.rate_limited("1.2.3.4")
 assert not _auth.rate_limited("5.6.7.8")   # a different client is unaffected
 print("audit regressions passed")
+
+# --- watcher is non-destructive: missing files never delete (2026-09-11) -----
+import tempfile as _tf
+_wroot = config.WATCH_DIR
+for _i in range(3):
+    _f = _wroot / f"w{_i}.jpg"
+    Image.new("RGB", (300, 200), (_i * 40, 100, 120)).save(_f)
+    worker.ingest_file(db, _f, f"w{_i}.jpg")
+_n0 = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
+assert _n0 == 3, _n0
+for _f in _wroot.glob("w*.jpg"):
+    _f.unlink()                      # empty the folder entirely
+worker._scan_watch_folder(db)
+_n1 = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
+assert _n1 == 3, f"watcher deleted photos on empty folder: {_n0} -> {_n1}"
+print("watcher non-destructive regression passed")
