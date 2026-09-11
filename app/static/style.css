@@ -232,9 +232,11 @@ input:focus, select:focus, textarea:focus {
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.grid { column-width: 150px; column-gap: 8px; }
+.grid .card { break-inside: avoid; margin-bottom: 8px; width: 100%; display: block; }
 @media (min-width: 700px) {
-  .grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .grid { column-width: 200px; column-gap: 10px; }
+  .grid .card { margin-bottom: 10px; }
 }
 .card {
   margin: 0; position: relative; border-radius: var(--radius); overflow: hidden;
@@ -255,7 +257,7 @@ input:focus, select:focus, textarea:focus {
 @media (hover: hover) and (pointer: fine) {
   .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
 }
-.card img { width: 100%; height: 100%; object-fit: cover; }
+.card img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card-placeholder {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
@@ -698,3 +700,13 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
   }
   .card:hover { transform: none; }
 }
+
+/* bulk matte picker (in the select bulk bar) */
+.bulk-matte-menu { min-width: 240px; padding: .5rem; display: flex; flex-direction: column; gap: .4rem; }
+.bulk-matte-menu .bm-types { display: flex; flex-wrap: wrap; gap: .25rem; }
+.bulk-matte-menu .bm-colors { display: flex; flex-wrap: wrap; gap: .25rem; }
+.bulk-matte-menu .matte-swatch {
+  width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--line); cursor: pointer;
+}
+.bulk-matte-menu .matte-swatch.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bulk-matte-menu .bm-apply { margin-top: .2rem; }

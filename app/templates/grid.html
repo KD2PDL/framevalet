@@ -35,6 +35,7 @@
     {% endif %}
     <button type="button" class="btn btn-sm" id="discoverBtn">Discover art</button>
     <button type="button" class="btn btn-sm" id="selectToggle" aria-pressed="false">Select</button>
+    <button type="button" class="btn btn-sm" id="selectAll" hidden>Select all</button>
   </div>
 </div>
 
@@ -46,7 +47,8 @@
   {% set n_q = assigned | select('equalto', 'queued') | list | length %}
   {% set n_f = assigned | select('equalto', 'failed') | list | length %}
   {% set errs = p.tv_states.values() | selectattr('status', 'equalto', 'failed') | map(attribute='error') | select | list %}
-  <figure class="card" tabindex="0" role="button"
+  <figure class="card{{ ' has-aspect' if p.aspect }}" tabindex="0" role="button"
+    {% if p.aspect %}style="aspect-ratio: {{ p.aspect }}"{% endif %}
     data-id="{{ p.id }}"
     data-filename="{{ p.filename }}"
     data-taken="{{ p.taken_date or '' }}"
@@ -105,6 +107,10 @@
     <div class="bulk-menu-wrap">
       <button type="button" class="btn btn-sm" data-menu="remove_tv">Remove from TV &#9662;</button>
       <div class="bulk-menu" data-menu-for="remove_tv" hidden></div>
+    </div>
+    <div class="bulk-menu-wrap">
+      <button type="button" class="btn btn-sm" data-menu="matte">Matte &#9662;</button>
+      <div class="bulk-menu bulk-matte-menu" data-menu-for="matte" hidden></div>
     </div>
     <button type="button" class="btn btn-sm btn-danger" data-bulk="delete">Delete</button>
   </div>

@@ -2,6 +2,7 @@
 """
 import contextlib
 import json
+import json as _json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -112,12 +113,28 @@ def _photo_dicts(db, user):
     for r in db.execute("SELECT pt.photo_id, t.name FROM photo_tags pt "
                         "JOIN tags t ON t.id=pt.tag_id"):
         tagmap.setdefault(r["photo_id"], []).append(r["name"])
-    return [dict(p) | {
-        "tv_states": tvstates.get(p["id"], {}),
-        "tags": tagmap.get(p["id"], []),
-        "can_delete": auth.can_delete(user, p),
-        "croppable": bool(p["orig_path"]),
-    } for p in photos]
+    out = []
+    for p in photos:
+        aspect = None
+        if p["width"] and p["height"]:
+            w, h = p["width"], p["height"]
+            if p["edits"]:
+                try:
+                    c = _json.loads(p["edits"]).get("crop")
+                    if c:
+                        w, h = c[2] * w, c[3] * h
+                except Exception:
+                    pass
+            if w and h:
+                aspect = round(w / h, 4)
+        out.append(dict(p) | {
+            "tv_states": tvstates.get(p["id"], {}),
+            "tags": tagmap.get(p["id"], []),
+            "can_delete": auth.can_delete(user, p),
+            "croppable": bool(p["orig_path"]),
+            "aspect": aspect,
+        })
+    return out
 
 
 @router.get("/")
@@ -361,6 +378,28 @@ async def bulk(request: Request, db=Depends(dbm.get_db), user=Depends(auth.curre
             tid = db.execute("SELECT id FROM tags WHERE name=?", (param,)).fetchone()["id"]
             db.execute("INSERT OR IGNORE INTO photo_tags(photo_id, tag_id) VALUES(?,?)",
                        (pid, tid)); done += 1
+        elif action == "matte":
+            matte = param or None
+            db.execute("UPDATE photos SET matte=? WHERE id=?", (matte, pid))
+            for tp in db.execute(
+                    "SELECT tp.*, t.* FROM tv_photos tp JOIN tvs t ON t.id=tp.tv_id "
+                    "WHERE tp.photo_id=? AND tp.status='on_tv' AND tp.content_id IS NOT NULL",
+                    (pid,)).fetchall():
+                svc = TVService(tp)
+                if svc.port_open():
+                    try:
+                        svc.change_matte(tp["content_id"], matte or tp["default_matte"],
+                                         attempts=1)
+                        db.execute("UPDATE tv_photos SET matte=? WHERE tv_id=? AND photo_id=?",
+                                   (matte or tp["default_matte"], tp["tv_id"], pid))
+                    except TVError:
+                        db.execute("UPDATE tv_photos SET render_key='' "
+                                   "WHERE tv_id=? AND photo_id=?", (tp["tv_id"], pid))
+                else:
+                    db.execute("UPDATE tv_photos SET render_key='' "
+                               "WHERE tv_id=? AND photo_id=?", (tp["tv_id"], pid))
+                svc.reset()
+            done += 1
         elif action == "untag" and param:
             db.execute("DELETE FROM photo_tags WHERE photo_id=? AND tag_id="
                        "(SELECT id FROM tags WHERE name=?)", (pid, param)); done += 1
@@ -393,8 +432,18 @@ async def bulk(request: Request, db=Depends(dbm.get_db), user=Depends(auth.curre
 # ------------------------------------------------------------------ serving
 @router.get("/thumbs/{pid}.jpg")
 def thumb(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
-    p = db.execute("SELECT thumb_path FROM photos WHERE id=?", (pid,)).fetchone()
-    if not p or not p["thumb_path"] or not Path(p["thumb_path"]).is_file():
+    p = db.execute("SELECT sha256, thumb_path, orig_path, edits FROM photos WHERE id=?",
+                   (pid,)).fetchone()
+    if not p:
+        raise HTTPException(404)
+    if p["edits"] and p["orig_path"] and Path(p["orig_path"]).is_file():
+        key = pipeline.preview_key(p["sha256"], p["edits"])
+        out = config.THUMBS_DIR / f"crop_{key}.jpg"
+        if not out.exists():
+            pipeline.render_preview(Path(p["orig_path"]), out, p["edits"], longest=480)
+        return FileResponse(out, media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=86400"})
+    if not p["thumb_path"] or not Path(p["thumb_path"]).is_file():
         raise HTTPException(404)
     return FileResponse(p["thumb_path"], media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})

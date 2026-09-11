@@ -347,15 +347,25 @@
       selectToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
       selectToggle.textContent = on ? 'Done' : 'Select';
     }
+    if (selectAllBtn) selectAllBtn.hidden = !on;
     if (!on) allCards().forEach((c) => c.classList.remove('selected'));
     updateBulkBar();
   }
+  const selectAllBtn = $('#selectAll');
   if (selectToggle && grid) {
     selectToggle.addEventListener('click', () => setSelectMode(!selectMode));
   }
+  if (selectAllBtn && grid) {
+    selectAllBtn.addEventListener('click', () => {
+      const vis = allCards().filter((c) => c.style.display !== 'none' && !c.hidden);
+      const allSelected = vis.length && vis.every((c) => c.classList.contains('selected'));
+      vis.forEach((c) => c.classList.toggle('selected', !allSelected));
+      updateBulkBar();
+    });
+  }
 
   function buildTvMenus() {
-    $$('.bulk-menu').forEach((menu) => {
+    $$('.bulk-menu:not(.bulk-matte-menu)').forEach((menu) => {
       menu.innerHTML = '';
       TVS.forEach((tv) => {
         const b = el('button', '', tv.name + (tv.enabled ? '' : ' (disabled)'));
@@ -375,6 +385,50 @@
     });
   }
 
+  function buildMatteMenu() {
+    const menu = $('.bulk-matte-menu');
+    if (!menu) return;
+    const types = [...document.querySelectorAll('#matteTypes [data-mtype]')]
+      .map((b) => ({ v: b.dataset.mtype, label: b.textContent.trim() }));
+    const colors = [...document.querySelectorAll('#matteColors .matte-swatch')]
+      .map((s) => ({ name: s.dataset.mcolor, hex: s.dataset.hex }));
+    let selType = 'flexible';
+    let selColor = colors[0] ? colors[0].name : 'antique';
+    menu.innerHTML = '';
+    const typeRow = el('div', 'bm-types');
+    types.forEach((ty) => {
+      const b = el('button', 'chip' + (ty.v === selType ? ' active' : ''), ty.label || 'TV default');
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        selType = ty.v;
+        typeRow.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === b));
+        colorRow.hidden = (selType === '' || selType === 'none');
+      });
+      typeRow.appendChild(b);
+    });
+    const colorRow = el('div', 'bm-colors');
+    colors.forEach((c) => {
+      const s = el('button', 'matte-swatch' + (c.name === selColor ? ' active' : ''));
+      s.type = 'button'; s.style.background = '#' + c.hex; s.title = c.name;
+      s.addEventListener('click', () => {
+        selColor = c.name;
+        colorRow.querySelectorAll('.matte-swatch').forEach((x) => x.classList.toggle('active', x === s));
+      });
+      colorRow.appendChild(s);
+    });
+    colorRow.hidden = (selType === '' || selType === 'none');
+    const apply = el('button', 'btn btn-sm btn-primary bm-apply', 'Apply matte');
+    apply.type = 'button';
+    apply.addEventListener('click', () => {
+      menu.hidden = true;
+      let matte = null;
+      if (selType === 'none') matte = 'none';
+      else if (selType) matte = `${selType}_${selColor}`;
+      runBulk('matte', matte === null ? '' : matte);
+    });
+    menu.append(typeRow, colorRow, apply);
+  }
+
   async function runBulk(action, param) {
     let cards = selectedCards();
     if (!cards.length) return;
@@ -389,8 +443,9 @@
       if (!param) return;
     }
     const ids = cards.map((c) => +c.dataset.id);
+    const sendParam = (action === 'matte') ? (param || null) : (param || null);
     try {
-      const data = await postJSON('/photos/bulk', { ids, action, param: param || null });
+      const data = await postJSON('/photos/bulk', { ids, action, param: sendParam });
       toast(`${data.done} photo${data.done === 1 ? '' : 's'} updated`, 'success');
       setTimeout(() => location.reload(), 900);
     } catch (e) {
@@ -400,6 +455,7 @@
 
   if (bulkBar) {
     buildTvMenus();
+    buildMatteMenu();
     bulkBar.addEventListener('click', (e) => {
       const menuBtn = e.target.closest('[data-menu]');
       if (menuBtn) {
