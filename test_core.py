@@ -134,3 +134,25 @@ worker._scan_watch_folder(db)
 _n1 = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
 assert _n1 == 3, f"watcher deleted photos on empty folder: {_n0} -> {_n1}"
 print("watcher non-destructive regression passed")
+
+# --- watcher dedup: rename / copy never duplicates (checksum) (2026-09-11) ----
+import shutil as _sh
+_wr = config.WATCH_DIR
+for _f in _wr.glob("*.jpg"):
+    _f.unlink()
+db.execute("DELETE FROM photos WHERE source='folder'"); db.commit()
+_a = _wr / "trip.jpg"
+Image.new("RGB", (500, 350), (160, 80, 30)).save(_a)
+worker._scan_watch_folder(db)
+assert db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"] == 1
+os.rename(_a, _wr / "trip-renamed.jpg")          # rename = same bytes, new name
+worker._scan_watch_folder(db)
+_c = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
+assert _c == 1, f"rename created a duplicate: {_c}"
+assert db.execute("SELECT folder_rel FROM photos WHERE source='folder'").fetchone()["folder_rel"] \
+    == "trip-renamed.jpg"                          # tracked path followed the rename
+_sh.copy(_wr / "trip-renamed.jpg", _wr / "trip-copy.jpg")   # byte-identical copy
+worker._scan_watch_folder(db)
+_c2 = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
+assert _c2 == 1, f"copy created a duplicate: {_c2}"
+print("watcher rename/copy dedup regression passed")
