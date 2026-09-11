@@ -400,6 +400,24 @@ def thumb(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
                         headers={"Cache-Control": "private, max-age=86400"})
 
 
+@router.get("/photo/{pid}/preview")
+def preview(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+    """The photo with its crop applied, sized for the editor. Cached by edits."""
+    p = db.execute("SELECT sha256, orig_path, edits FROM photos WHERE id=?",
+                   (pid,)).fetchone()
+    if not p or not p["orig_path"] or not Path(p["orig_path"]).is_file():
+        raise HTTPException(404)
+    if not p["edits"]:
+        return FileResponse(p["orig_path"], media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=3600"})
+    key = pipeline.preview_key(p["sha256"], p["edits"])
+    out = config.RENDERS_DIR / f"preview_{key}.jpg"
+    if not out.exists():
+        pipeline.render_preview(Path(p["orig_path"]), out, p["edits"])
+    return FileResponse(out, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.get("/photo/{pid}/original")
 def original(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
     p = db.execute("SELECT orig_path FROM photos WHERE id=?", (pid,)).fetchone()

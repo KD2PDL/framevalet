@@ -603,7 +603,8 @@
       currentCard = card;
       const d = card.dataset;
       const croppable = d.croppable === '1';
-      img.src = croppable ? `/photo/${d.id}/original`
+      const editsTag = encodeURIComponent(d.edits || '');
+      img.src = croppable ? `/photo/${d.id}/preview?e=${editsTag}`
         : (d.thumb === '1' ? `/thumbs/${d.id}.jpg` : '');
       img.alt = d.filename;
       nameInput.value = d.filename;
@@ -643,6 +644,12 @@
       setTimeout(finish, 160);
     }
     overlay._close = closeOverlay;
+    window.__fvRefreshPreview = (card) => {
+      if (currentCard && card === currentCard) {
+        const editsTag = encodeURIComponent(card.dataset.edits || '');
+        img.src = `/photo/${card.dataset.id}/preview?e=${editsTag}`;
+      }
+    };
 
     grid.addEventListener('click', (e) => {
       const card = e.target.closest('.card');
@@ -942,7 +949,8 @@
       try {
         await postJSON(`/photo/${cropCard.dataset.id}/crop`, { crop });
         cropCard.dataset.edits = JSON.stringify(JSON.stringify({ crop }));
-        toast('Crop saved — re-rendering for TV', 'success');
+        if (window.__fvRefreshPreview) window.__fvRefreshPreview(cropCard);
+        toast('Crop saved', 'success');
         closeCrop();
       } catch (e) {
         toast(e.message);
@@ -953,7 +961,8 @@
       try {
         await postJSON(`/photo/${cropCard.dataset.id}/crop`, { crop: null });
         cropCard.dataset.edits = JSON.stringify('');
-        toast('Crop cleared — re-rendering for TV', 'success');
+        if (window.__fvRefreshPreview) window.__fvRefreshPreview(cropCard);
+        toast('Crop cleared', 'success');
         closeCrop();
       } catch (e) {
         toast(e.message);

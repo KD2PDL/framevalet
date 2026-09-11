@@ -123,6 +123,27 @@ def render(orig_path: Path, out_path: Path, edits: str | None, style: str,
     img.save(out_path, "JPEG", quality=quality, optimize=True, progressive=False)
 
 
+def render_preview(orig_path: Path, out_path: Path, edits: str | None, longest=1600):
+    """Just the cropped photo pixels (no fit-letterbox, no matte) so the browser
+    editor can place it on a CSS matte stage. Mirrors the crop math in render()."""
+    img = Image.open(orig_path).convert("RGB")
+    if edits:
+        crop = json.loads(edits).get("crop")
+        if crop:
+            x, y, w, h = crop
+            box = (round(x * img.width), round(y * img.height),
+                   round((x + w) * img.width), round((y + h) * img.height))
+            if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
+                img = img.crop(box)
+    if max(img.width, img.height) > longest:
+        img.thumbnail((longest, longest), Image.LANCZOS)
+    img.save(out_path, "JPEG", quality=88, optimize=True)
+
+
+def preview_key(sha: str, edits: str | None) -> str:
+    return hashlib.sha1(json.dumps([sha, edits or "", "preview"]).encode()).hexdigest()
+
+
 def make_thumb_from_bytes(data: bytes, out_thumb: Path):
     """Thumbnail for photos adopted from the TV (we only get its thumbnail stream)."""
     img = Image.open(io.BytesIO(data))
