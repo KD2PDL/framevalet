@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # framevalet Proxmox installer: creates an unprivileged Debian 12 LXC and installs
 # framevalet natively under systemd (no Docker layer). Run on a Proxmox VE host:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/kdsystemsinc/framevalet/main/proxmox/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/KD2PDL/framevalet/main/proxmox/install.sh)"
 set -euo pipefail
 
-REPO="https://github.com/kdsystemsinc/framevalet.git"
+REPO="https://github.com/KD2PDL/framevalet.git"
 HOSTNAME="framevalet"
 DISK="4"      # GB
 RAM="512"     # MB

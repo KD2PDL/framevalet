@@ -37,7 +37,7 @@ pinned by an env var (env always wins and the UI says so).
 ```yaml
 services:
   framevalet:
-    image: ghcr.io/kdsystemsinc/framevalet:latest
+    image: ghcr.io/KD2PDL/framevalet:latest
     restart: unless-stopped
     ports: ["8470:8470"]
     volumes: ["./data:/data"]
@@ -52,7 +52,7 @@ once, ever).
 On a Proxmox VE host:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/kdsystemsinc/framevalet/main/proxmox/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KD2PDL/framevalet/main/proxmox/install.sh)"
 ```
 
 Creates an unprivileged Debian container running framevalet under systemd.
