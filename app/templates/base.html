@@ -13,10 +13,10 @@
   }
   document.documentElement.setAttribute('data-theme', t);
 })();</script>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
 <style>:root { --accent: {{ brand.accent }}; }</style>
 <script>window.FV_TVS = [{% for t in tvs %}{"id": {{ t.id }}, "name": {{ t.name | tojson }}, "enabled": {{ 1 if t.enabled else 0 }}, "ok": {{ 1 if t.status.ok else 0 }}}{{ ", " if not loop.last }}{% endfor %}];</script>
-<script src="/static/app.js" defer></script>
+<script src="/static/app.js?v={{ asset_v }}" defer></script>
 </head>
 <body>
 <header class="site-head">

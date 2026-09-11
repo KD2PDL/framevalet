@@ -624,7 +624,7 @@
       const card = e.target.closest('.card');
       if (!card) return;
       if (e.target.closest('.badge-failed')) { openCard(card); return; }
-      const favBtn = e.target.closest('[data-fav]');
+      const favBtn = e.target.closest('button.fav');
       if (selectMode) {
         card.classList.toggle('selected');
         updateBulkBar();

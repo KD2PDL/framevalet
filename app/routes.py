@@ -28,8 +28,13 @@ def render_page(request, db, name, user=None, **ctx):
         logo_url = None
     tvs = [dict(t) | {"status": worker.tv_status(t["id"])}
            for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall()]
+    static = Path(__file__).parent / "static"
+    try:  # mtime-based cache busting: any asset edit invalidates browser caches
+        asset_v = int(max((static / f).stat().st_mtime for f in ("app.js", "style.css")))
+    except OSError:
+        asset_v = 0
     ctx.update(
-        request=request, user=user, tvs=tvs,
+        request=request, user=user, tvs=tvs, asset_v=asset_v,
         brand={"name": brand_name, "accent": config.get(db, "brand_accent"),
                "logo_url": logo_url},
     )
