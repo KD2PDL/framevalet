@@ -18,11 +18,18 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 def render(request, db, name, user=None, **ctx):
     brand_logo = config.get(db, "brand_logo")
+    brand_name = config.get(db, "brand_name")
+    if brand_logo:
+        logo_url = f"/branding/{brand_logo}"
+    elif brand_name == "framevalet":
+        logo_url = "/static/logo.png"   # stock wordmark; custom brand names get text
+    else:
+        logo_url = None
     ctx.update(
         request=request, user=user,
-        brand={"name": config.get(db, "brand_name"),
+        brand={"name": brand_name,
                "accent": config.get(db, "brand_accent"),
-               "logo_url": f"/branding/{brand_logo}" if brand_logo else None},
+               "logo_url": logo_url},
         tv=dict(worker.status),
     )
     return templates.TemplateResponse(request, name, ctx)

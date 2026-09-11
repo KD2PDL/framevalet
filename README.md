@@ -1,4 +1,6 @@
-# framevalet
+<p align="center">
+  <img src="assets/logo.png" alt="FrameValet" width="480">
+</p>
 
 Self-hosted, multi-user photo manager for Samsung Frame TVs. The family uploads
 photos from any phone or laptop; framevalet optimizes them (HEIC included),
