@@ -366,6 +366,19 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .overlay-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .overlay-imgwrap { position: relative; background: #18140d; display: flex; align-items: center; justify-content: center; min-height: 200px; }
 .overlay-imgwrap img { max-height: 62vh; width: auto; max-width: 100%; object-fit: contain; }
+.overlay-imgwrap.matted { aspect-ratio: 16 / 9; background: var(--mat-color, #e0dbd2); min-height: 0; }
+.overlay-imgwrap.matted img {
+  max-width: calc(100% - 2 * var(--mat-pad, 6%));
+  max-height: calc(100% - 2 * var(--mat-pad, 6%));
+  transition: max-width .18s ease-out, max-height .18s ease-out;
+}
+.overlay-imgwrap.matted.mat-shadowbox img { box-shadow: 0 10px 34px rgba(0,0,0,.5); }
+.overlay-imgwrap.matted.mat-modernthin img,
+.overlay-imgwrap.matted.mat-modern img,
+.overlay-imgwrap.matted.mat-modernwide img { outline: 1px solid rgba(0,0,0,.18); outline-offset: -1px; }
+.ov-matte-note { position: absolute; left: .6rem; bottom: .6rem; z-index: 2;
+  font-size: .7rem; padding: .15rem .5rem; border-radius: 99px;
+  background: rgba(20,18,14,.55); color: #f2eee4; }
 .overlay-body { padding: .8rem 1rem 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: .75rem; }
 .overlay-meta { display: flex; flex-direction: column; gap: .1rem; font-size: .9rem; word-break: break-all; }
 .overlay-actions { display: flex; gap: .6rem; flex-wrap: wrap; }

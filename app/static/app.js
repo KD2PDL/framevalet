@@ -523,6 +523,26 @@
     rebuildOverlayRows = (card) => { if (currentCard === card) buildTvRows(card); };
 
     // ---- matte picker state
+    const imgwrap = overlay.querySelector('.overlay-imgwrap');
+    const matteNote = $('#ovMatteNote');
+    const MAT_PADS = { modernthin: '3%', modern: '6%', modernwide: '10%',
+                       flexible: '5%', shadowbox: '7%', panoramic: '6%',
+                       triptych: '6%', mix: '6%', squares: '6%' };
+    function updateMattePreview() {
+      const { mtype, mcolor } = matteSelection();
+      const active = matteColors.querySelector('.matte-swatch.active');
+      const hex = active ? active.dataset.hex : 'e0dbd2';
+      imgwrap.classList.remove(...[...imgwrap.classList].filter((c) => c.startsWith('mat-')));
+      if (!mtype || mtype === 'none') {   // TV default or no mat: plain preview
+        imgwrap.classList.remove('matted');
+        if (matteNote) matteNote.hidden = true;
+        return;
+      }
+      imgwrap.classList.add('matted', `mat-${mtype}`);
+      imgwrap.style.setProperty('--mat-color', `#${hex}`);
+      imgwrap.style.setProperty('--mat-pad', MAT_PADS[mtype] || '6%');
+      if (matteNote) matteNote.hidden = false;
+    }
     function matteSelection() {
       const t = matteTypes.querySelector('.chip.active');
       const c = matteColors.querySelector('.matte-swatch.active');
@@ -540,6 +560,7 @@
       matteColors.querySelectorAll('.matte-swatch').forEach((b) =>
         b.classList.toggle('active', b.dataset.mcolor === mcolor));
       matteColors.hidden = (mtype === '' || mtype === 'none');
+      updateMattePreview();
     }
     matteTypes.addEventListener('click', (e) => {
       const b = e.target.closest('[data-mtype]');
@@ -551,11 +572,13 @@
         const first = matteColors.querySelector('.matte-swatch');
         if (first) first.classList.add('active');
       }
+      updateMattePreview();
     });
     matteColors.addEventListener('click', (e) => {
       const b = e.target.closest('.matte-swatch');
       if (!b) return;
       matteColors.querySelectorAll('.matte-swatch').forEach((c) => c.classList.toggle('active', c === b));
+      updateMattePreview();
     });
     matteApply.addEventListener('click', async () => {
       if (!currentCard) return;
@@ -597,6 +620,7 @@
       styleSel.value = d.style || 'fit';
       matteWrap.hidden = !hasMatte;
       if (hasMatte) setMatteUI(d.matte || '');
+      else { imgwrap.classList.remove('matted'); if (matteNote) matteNote.hidden = true; }
       btnCrop.hidden = !croppable;
       btnDelete.hidden = d.candelete !== '1';
       overlay.hidden = false;

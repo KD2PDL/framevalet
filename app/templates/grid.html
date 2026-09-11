@@ -116,6 +116,7 @@
     <button type="button" class="overlay-close" id="overlayClose" aria-label="Close">&times;</button>
     <div class="overlay-imgwrap">
       <img id="overlayImg" alt="">
+      <span class="ov-matte-note" id="ovMatteNote" hidden>Matte preview (approximate)</span>
       <button type="button" class="btn btn-sm ov-crop-btn" id="ovCrop" hidden>Crop</button>
     </div>
     <div class="overlay-body">
@@ -157,7 +158,7 @@
           </div>
           <div class="matte-colors" id="matteColors" hidden>
             {% for name, hex in matte_colors %}
-            <button type="button" class="matte-swatch" data-mcolor="{{ name }}"
+            <button type="button" class="matte-swatch" data-mcolor="{{ name }}" data-hex="{{ hex }}"
               style="background: #{{ hex }}" title="{{ name }}" aria-label="Matte color {{ name }}"></button>
             {% endfor %}
           </div>
