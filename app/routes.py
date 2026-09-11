@@ -1,22 +1,23 @@
-"""All routes: pages render Jinja templates; actions are POSTs that redirect.
-Photo grid does light fetch() calls for status refresh, nothing SPA-shaped.
+"""All routes: pages render Jinja templates; actions are POSTs (form or JSON).
 """
 import contextlib
-import secrets
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db as dbm, pipeline, worker
-from .tvservice import TVService, TVError, doctor as run_doctor, SLIDESHOW_PRESETS
+from . import auth, config, db as dbm, discovery, pipeline, worker
+from .tvservice import (TVService, TVError, doctor as run_doctor,
+                        SLIDESHOW_PRESETS, MOTION_TIMER_VALUES,
+                        MOTION_SENSITIVITY, MATTE_TYPES, MATTE_COLORS)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
-def render(request, db, name, user=None, **ctx):
+def render_page(request, db, name, user=None, **ctx):
     brand_logo = config.get(db, "brand_logo")
     brand_name = config.get(db, "brand_name")
     if brand_logo:
@@ -25,18 +26,21 @@ def render(request, db, name, user=None, **ctx):
         logo_url = "/static/logo.png"   # stock wordmark; custom brand names get text
     else:
         logo_url = None
+    tvs = [dict(t) | {"status": worker.tv_status(t["id"])}
+           for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall()]
     ctx.update(
-        request=request, user=user,
-        brand={"name": brand_name,
-               "accent": config.get(db, "brand_accent"),
+        request=request, user=user, tvs=tvs,
+        brand={"name": brand_name, "accent": config.get(db, "brand_accent"),
                "logo_url": logo_url},
-        tv=dict(worker.status),
     )
     return templates.TemplateResponse(request, name, ctx)
 
 
-def _svc(db) -> TVService:
-    return TVService(config.get(db, "tv_host"), config.get(db, "tv_client_name"))
+def _tv(db, tv_id: int):
+    tv = db.execute("SELECT * FROM tvs WHERE id=?", (tv_id,)).fetchone()
+    if not tv:
+        raise HTTPException(404, "no such TV")
+    return tv
 
 
 # ---------------------------------------------------------------- setup/login
@@ -44,7 +48,7 @@ def _svc(db) -> TVService:
 def setup_page(request: Request, db=Depends(dbm.get_db)):
     if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         return RedirectResponse("/", 303)
-    return render(request, db, "setup.html", error=None)
+    return render_page(request, db, "setup.html", error=None)
 
 
 @router.post("/setup")
@@ -53,10 +57,10 @@ def setup_post(request: Request, username: str = Form(...), password: str = Form
     if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         raise HTTPException(403)
     if len(password) < 8:
-        return render(request, db, "setup.html", error="Password must be 8+ characters")
+        return render_page(request, db, "setup.html", error="Password must be 8+ characters")
     auth.create_user(db, username, password, role="admin", can_delete_any=True)
     user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    resp = RedirectResponse("/doctor", 303)
+    resp = RedirectResponse("/tvs", 303)
     auth.set_cookie(resp, auth.start_session(db, user["id"]))
     return resp
 
@@ -65,7 +69,7 @@ def setup_post(request: Request, username: str = Form(...), password: str = Form
 def login_page(request: Request, db=Depends(dbm.get_db)):
     if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         return RedirectResponse("/setup", 303)
-    return render(request, db, "login.html", error=None)
+    return render_page(request, db, "login.html", error=None)
 
 
 @router.post("/login")
@@ -73,7 +77,7 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
                db=Depends(dbm.get_db)):
     user = auth.check_login(db, username, password)
     if not user:
-        return render(request, db, "login.html", error="Wrong username or password")
+        return render_page(request, db, "login.html", error="Wrong username or password")
     resp = RedirectResponse("/", 303)
     auth.set_cookie(resp, auth.start_session(db, user["id"]))
     return resp
@@ -90,17 +94,34 @@ def logout(request: Request, db=Depends(dbm.get_db)):
 
 
 # ------------------------------------------------------------------- library
-@router.get("/")
-def home(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+def _photo_dicts(db, user):
     photos = db.execute(
         "SELECT p.*, u.username AS uploader FROM photos p "
         "LEFT JOIN users u ON u.id=p.uploaded_by "
-        "WHERE p.status != 'removed' ORDER BY p.taken_date DESC, p.id DESC").fetchall()
-    items = [dict(p) | {"can_delete": auth.can_delete(user, p)} for p in photos]
-    counts = {s: db.execute("SELECT COUNT(*) c FROM photos WHERE status=?", (s,)).fetchone()["c"]
-              for s in ("queued", "processing", "on_tv", "failed")}
-    return render(request, db, "grid.html", user, photos=items, counts=counts,
-                  import_state=dict(worker.import_state))
+        "ORDER BY p.taken_date DESC, p.id DESC").fetchall()
+    tvstates = {}
+    for r in db.execute("SELECT tv_id, photo_id, status, error FROM tv_photos"):
+        tvstates.setdefault(r["photo_id"], {})[r["tv_id"]] = \
+            {"status": r["status"], "error": r["error"]}
+    tagmap = {}
+    for r in db.execute("SELECT pt.photo_id, t.name FROM photo_tags pt "
+                        "JOIN tags t ON t.id=pt.tag_id"):
+        tagmap.setdefault(r["photo_id"], []).append(r["name"])
+    return [dict(p) | {
+        "tv_states": tvstates.get(p["id"], {}),
+        "tags": tagmap.get(p["id"], []),
+        "can_delete": auth.can_delete(user, p),
+        "croppable": bool(p["orig_path"]),
+    } for p in photos]
+
+
+@router.get("/")
+def home(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+    all_tags = [r["name"] for r in db.execute("SELECT name FROM tags ORDER BY name")]
+    return render_page(request, db, "grid.html", user,
+                       photos=_photo_dicts(db, user), all_tags=all_tags,
+                       matte_types=MATTE_TYPES, matte_colors=MATTE_COLORS,
+                       import_state=dict(worker.import_state))
 
 
 @router.post("/upload")
@@ -115,34 +136,15 @@ async def upload(request: Request, files: list[UploadFile] = File(...),
         if Path(name).suffix.lower() not in pipeline.ACCEPTED:
             results.append({"file": name, "ok": False, "error": "unsupported format"})
             continue
-        pid = secrets.token_hex(8)
-        proc = config.PROCESSED_DIR / f"{pid}.jpg"
-        thumb = config.THUMBS_DIR / f"{pid}.jpg"
         try:
-            meta = pipeline.process(data, proc, thumb,
-                                    int(config.get(db, "jpeg_quality")))
+            pid = worker.ingest_bytes(db, data, filename=name, user_id=user["id"])
         except pipeline.PipelineError as e:
             results.append({"file": name, "ok": False, "error": str(e)})
             continue
-        dup = db.execute("SELECT id FROM photos WHERE sha256=? AND status!='removed'",
-                         (meta["sha256"],)).fetchone()
-        if dup:
-            proc.unlink(missing_ok=True); thumb.unlink(missing_ok=True)
+        if pid is None:
             results.append({"file": name, "ok": False, "error": "duplicate photo"})
             continue
-        orig = None
-        if config.get(db, "keep_originals") == "true":
-            orig = config.ORIGINALS_DIR / f"{pid}{Path(name).suffix.lower()}"
-            orig.write_bytes(data)
-        db.execute(
-            "INSERT INTO photos(filename, sha256, orig_path, proc_path, thumb_path, "
-            "width, height, bytes, taken_date, matte, source, uploaded_by, status, created) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (name, meta["sha256"], str(orig) if orig else None, str(proc), str(thumb),
-             meta["width"], meta["height"], meta["bytes"], meta["taken_date"],
-             config.get(db, "default_matte"), "upload", user["id"], "queued", dbm.now()))
-        db.commit()
-        results.append({"file": name, "ok": True})
+        results.append({"file": name, "ok": True, "id": pid})
     worker.kick()
     return JSONResponse({"results": results})
 
@@ -154,36 +156,236 @@ def delete_photo(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_use
         raise HTTPException(404)
     if not auth.can_delete(user, p):
         raise HTTPException(403, "you can only delete your own uploads")
-    if p["tv_content_id"]:
-        try:
-            svc = _svc(db)
-            svc.delete(p["tv_content_id"])
-            svc.reset()
-        except TVError as e:
-            raise HTTPException(502, f"TV delete failed: {e}") from e
-    for key in ("orig_path", "proc_path", "thumb_path"):
-        if p[key]:
-            with contextlib.suppress(OSError):
-                Path(p[key]).unlink()
-    db.execute("DELETE FROM photos WHERE id=?", (pid,))
-    db.commit()
+    worker.delete_photo_everywhere(db, p)
     return JSONResponse({"ok": True})
 
 
-@router.post("/photo/{pid}/display")
-def display_photo(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+@router.post("/photo/{pid}/favorite")
+def favorite(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+    db.execute("UPDATE photos SET favorite=1-favorite WHERE id=?", (pid,))
+    db.commit()
+    row = db.execute("SELECT favorite FROM photos WHERE id=?", (pid,)).fetchone()
+    return JSONResponse({"ok": True, "favorite": bool(row and row["favorite"])})
+
+
+@router.post("/photo/{pid}/tags")
+async def set_tags(pid: int, request: Request, db=Depends(dbm.get_db),
+                   user=Depends(auth.current_user)):
+    body = await request.json()
+    names = [t.strip() for t in body.get("tags", []) if t.strip()][:20]
+    db.execute("DELETE FROM photo_tags WHERE photo_id=?", (pid,))
+    for n in names:
+        db.execute("INSERT OR IGNORE INTO tags(name) VALUES(?)", (n,))
+        tid = db.execute("SELECT id FROM tags WHERE name=?", (n,)).fetchone()["id"]
+        db.execute("INSERT OR IGNORE INTO photo_tags(photo_id, tag_id) VALUES(?,?)",
+                   (pid, tid))
+    db.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM photo_tags)")
+    db.commit()
+    return JSONResponse({"ok": True, "tags": names})
+
+
+@router.post("/photo/{pid}/crop")
+async def save_crop(pid: int, request: Request, db=Depends(dbm.get_db),
+                    user=Depends(auth.current_user)):
+    """Body: {"crop": [x,y,w,h] normalized 0..1} or {"crop": null} to clear.
+    The push loop notices the stale render_key and re-pushes automatically."""
     p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
-    if not p or not p["tv_content_id"]:
-        raise HTTPException(404, "photo is not on the TV")
-    try:
-        svc = _svc(db)
-        svc.select(p["tv_content_id"])
+    if not p:
+        raise HTTPException(404)
+    if not p["orig_path"]:
+        raise HTTPException(400, "no original stored for this photo; crop unavailable")
+    body = await request.json()
+    crop = body.get("crop")
+    if crop is not None:
+        if (not isinstance(crop, list) or len(crop) != 4
+                or not all(isinstance(v, (int, float)) for v in crop)):
+            raise HTTPException(400, "crop must be [x,y,w,h]")
+        x, y, w, h = crop
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 - x and 0 < h <= 1 - y):
+            raise HTTPException(400, "crop out of bounds")
+        edits = json.dumps({"crop": [round(v, 5) for v in crop]})
+    else:
+        edits = None
+    db.execute("UPDATE photos SET edits=? WHERE id=?", (edits, pid))
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/photo/{pid}/style")
+def set_style(pid: int, style: str = Form(...), db=Depends(dbm.get_db),
+              user=Depends(auth.current_user)):
+    if style not in ("fit", "blurfill"):
+        raise HTTPException(400, "style must be fit or blurfill")
+    db.execute("UPDATE photos SET style=? WHERE id=?", (style, pid))
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True})
+
+
+
+@router.post("/photo/{pid}/matte")
+async def set_matte(pid: int, request: Request, db=Depends(dbm.get_db),
+                    user=Depends(auth.current_user)):
+    """Body: {"matte": "type_color"} or {"matte": null} for TV default.
+    Applied live via change_matte where the photo is already on a TV; queued
+    copies pick it up at push time."""
+    body = await request.json()
+    matte = body.get("matte")
+    if matte:
+        try:
+            mtype, mcolor = matte.split("_", 1)
+        except ValueError:
+            mtype, mcolor = matte, ""
+        if mtype not in MATTE_TYPES or (mtype != "none" and mcolor not in
+                                        [c for c, _ in MATTE_COLORS]):
+            raise HTTPException(400, "unknown matte")
+    p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
+    if not p:
+        raise HTTPException(404)
+    db.execute("UPDATE photos SET matte=? WHERE id=?", (matte, pid))
+    live, deferred = 0, 0
+    for tp in db.execute(
+            "SELECT tp.*, t.* FROM tv_photos tp JOIN tvs t ON t.id=tp.tv_id "
+            "WHERE tp.photo_id=? AND tp.status='on_tv' AND tp.content_id IS NOT NULL",
+            (pid,)).fetchall():
+        svc = TVService(tp)
+        applied_live = False
+        if svc.port_open():
+            try:
+                svc.change_matte(tp["content_id"], matte or tp["default_matte"], attempts=1)
+                db.execute("UPDATE tv_photos SET matte=? WHERE tv_id=? AND photo_id=?",
+                           (matte or tp["default_matte"], tp["tv_id"], pid))
+                applied_live = True
+            except TVError:
+                pass
         svc.reset()
+        if applied_live:
+            live += 1
+        else:
+            # TV off right now: stale the render so the worker re-pushes with it
+            db.execute("UPDATE tv_photos SET render_key='' WHERE tv_id=? AND photo_id=?",
+                       (tp["tv_id"], pid))
+            deferred += 1
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True, "live": live, "deferred": deferred})
+
+
+@router.post("/photo/{pid}/meta")
+async def set_meta(pid: int, request: Request, db=Depends(dbm.get_db),
+                   user=Depends(auth.current_user)):
+    """Body: {"filename"?: str, "taken_date"?: "YYYY-MM-DD[THH:MM]" or ""}.
+    A date change forces a re-push (the TV stores the date at upload time)."""
+    p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
+    if not p:
+        raise HTTPException(404)
+    body = await request.json()
+    if "filename" in body:
+        name = str(body["filename"]).strip()[:120]
+        if not name:
+            raise HTTPException(400, "title cannot be empty")
+        db.execute("UPDATE photos SET filename=? WHERE id=?", (name, pid))
+    if "taken_date" in body:
+        raw = str(body["taken_date"] or "").strip()
+        if raw:
+            from datetime import datetime
+            parsed = None
+            for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d", "%Y:%m:%d %H:%M:%S"):
+                try:
+                    parsed = datetime.strptime(raw, fmt)
+                    break
+                except ValueError:
+                    pass
+            if not parsed:
+                raise HTTPException(400, "date must be YYYY-MM-DD or YYYY-MM-DDTHH:MM")
+            tvdate = parsed.strftime("%Y:%m:%d %H:%M:%S")
+        else:
+            tvdate = None
+        if tvdate != p["taken_date"]:
+            db.execute("UPDATE photos SET taken_date=? WHERE id=?", (tvdate, pid))
+            if p["orig_path"]:   # re-push only possible when we hold the original
+                db.execute("UPDATE tv_photos SET render_key='' "
+                           "WHERE photo_id=? AND status='on_tv'", (pid,))
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/photo/{pid}/display/{tv_id}")
+def display_photo(pid: int, tv_id: int, db=Depends(dbm.get_db),
+                  user=Depends(auth.current_user)):
+    tp = db.execute("SELECT content_id FROM tv_photos WHERE tv_id=? AND photo_id=? "
+                    "AND status='on_tv'", (tv_id, pid)).fetchone()
+    if not tp or not tp["content_id"]:
+        raise HTTPException(404, "photo is not on that TV")
+    svc = TVService(_tv(db, tv_id))
+    try:
+        if not svc.port_open():
+            raise HTTPException(502, "TV is unreachable right now")
+        svc.select(tp["content_id"], attempts=1)
     except TVError as e:
         raise HTTPException(502, str(e)) from e
+    finally:
+        svc.reset()
     return JSONResponse({"ok": True})
 
 
+@router.post("/photos/bulk")
+async def bulk(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+    """Body: {"ids":[...], "action": "...", "param": ...}"""
+    body = await request.json()
+    ids = [int(i) for i in body.get("ids", [])][:2000]
+    action = body.get("action")
+    param = body.get("param")
+    done = 0
+    for pid in ids:
+        p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
+        if not p:
+            continue
+        if action == "delete":
+            if auth.can_delete(user, p):
+                worker.delete_photo_everywhere(db, p)
+                done += 1
+        elif action == "favorite":
+            db.execute("UPDATE photos SET favorite=1 WHERE id=?", (pid,)); done += 1
+        elif action == "unfavorite":
+            db.execute("UPDATE photos SET favorite=0 WHERE id=?", (pid,)); done += 1
+        elif action == "tag" and param:
+            db.execute("INSERT OR IGNORE INTO tags(name) VALUES(?)", (param,))
+            tid = db.execute("SELECT id FROM tags WHERE name=?", (param,)).fetchone()["id"]
+            db.execute("INSERT OR IGNORE INTO photo_tags(photo_id, tag_id) VALUES(?,?)",
+                       (pid, tid)); done += 1
+        elif action == "untag" and param:
+            db.execute("DELETE FROM photo_tags WHERE photo_id=? AND tag_id="
+                       "(SELECT id FROM tags WHERE name=?)", (pid, param)); done += 1
+        elif action == "send_tv" and param:
+            if p["orig_path"]:
+                worker.assign_photo(db, pid, [int(param)]); done += 1
+        elif action == "remove_tv" and param:
+            tp = db.execute("SELECT * FROM tv_photos WHERE tv_id=? AND photo_id=?",
+                            (int(param), pid)).fetchone()
+            if tp:
+                if tp["content_id"]:
+                    svc = TVService(_tv(db, int(param)))
+                    removed = False
+                    if svc.port_open():
+                        with contextlib.suppress(TVError):
+                            svc.delete(tp["content_id"], attempts=1)
+                            removed = True
+                    svc.reset()
+                    if not removed:
+                        db.execute("INSERT OR IGNORE INTO pending_tv_deletes"
+                                   "(tv_id, content_id) VALUES(?,?)",
+                                   (int(param), tp["content_id"]))
+                db.execute("DELETE FROM tv_photos WHERE tv_id=? AND photo_id=?",
+                           (int(param), pid)); done += 1
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True, "done": done})
+
+
+# ------------------------------------------------------------------ serving
 @router.get("/thumbs/{pid}.jpg")
 def thumb(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
     p = db.execute("SELECT thumb_path FROM photos WHERE id=?", (pid,)).fetchone()
@@ -193,13 +395,13 @@ def thumb(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
                         headers={"Cache-Control": "private, max-age=86400"})
 
 
-@router.get("/photo/{pid}/full")
-def full(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
-    p = db.execute("SELECT proc_path FROM photos WHERE id=?", (pid,)).fetchone()
-    if not p or not p["proc_path"] or not Path(p["proc_path"]).is_file():
+@router.get("/photo/{pid}/original")
+def original(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+    p = db.execute("SELECT orig_path FROM photos WHERE id=?", (pid,)).fetchone()
+    if not p or not p["orig_path"] or not Path(p["orig_path"]).is_file():
         raise HTTPException(404)
-    return FileResponse(p["proc_path"], media_type="image/jpeg",
-                        headers={"Cache-Control": "private, max-age=86400"})
+    return FileResponse(p["orig_path"], media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/branding/{name}")
@@ -212,24 +414,103 @@ def branding(name: str):
 
 @router.get("/api/status")
 def api_status(db=Depends(dbm.get_db), user=Depends(auth.current_user)):
-    counts = {s: db.execute("SELECT COUNT(*) c FROM photos WHERE status=?", (s,)).fetchone()["c"]
-              for s in ("queued", "processing", "on_tv", "failed")}
-    return {"tv": dict(worker.status), "counts": counts,
-            "import": dict(worker.import_state)}
+    counts = {s: db.execute("SELECT COUNT(DISTINCT photo_id) c FROM tv_photos "
+                            "WHERE status=?", (s,)).fetchone()["c"]
+              for s in ("queued", "on_tv", "failed")}
+    return {"tvs": {t["id"]: worker.tv_status(t["id"])
+                    for t in db.execute("SELECT id FROM tvs")},
+            "counts": counts, "import": dict(worker.import_state),
+            "watch": status_watch(db)}
 
 
-# -------------------------------------------------------------------- doctor
-@router.get("/doctor")
-def doctor_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
-    steps = run_doctor(config.get(db, "tv_host"), config.get(db, "tv_client_name"))
-    return render(request, db, "doctor.html", user, steps=steps,
-                  host=config.get(db, "tv_host"),
-                  paired=_svc(db).has_token())
+def status_watch(db):
+    return {"watch": dict(worker.status["watch"]),
+            "rclone": dict(worker.status["rclone"])}
 
 
-@router.post("/doctor/pair")
-def pair(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
-    svc = _svc(db)
+# ------------------------------------------------------------------ TV pages
+@router.get("/tvs")
+def tvs_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    details = []
+    for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall():
+        svc = TVService(t)
+        details.append(dict(t) | {
+            "status": worker.tv_status(t["id"]),
+            "paired": svc.has_token(),
+            "photo_count": db.execute(
+                "SELECT COUNT(*) c FROM tv_photos WHERE tv_id=? AND status='on_tv'",
+                (t["id"],)).fetchone()["c"],
+            "schedules": [dict(s) for s in db.execute(
+                "SELECT * FROM schedules WHERE tv_id=?", (t["id"],))],
+        })
+    return render_page(request, db, "tvs.html", user, tv_details=details,
+                       slideshow_presets=SLIDESHOW_PRESETS,
+                       motion_timer_values=MOTION_TIMER_VALUES,
+                       motion_sensitivity=MOTION_SENSITIVITY,
+                       import_state=dict(worker.import_state))
+
+
+@router.get("/tvs/discover")
+async def discover_tvs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    """SSDP scan (~3s). Returns Samsung TVs found on the LAN, Frames first.
+    Inside Docker bridge networking this finds nothing; add by IP instead."""
+    import asyncio as _aio
+    found = await _aio.to_thread(discovery.scan)
+    known = {t["host"] for t in db.execute("SELECT host FROM tvs")}
+    for f in found:
+        f["already_added"] = f["host"] in known
+    return JSONResponse({"results": found})
+
+
+@router.post("/tvs")
+def add_tv(name: str = Form(...), host: str = Form(...), mac: str = Form(""),
+           client_name: str = Form("framevalet"),
+           db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    db.execute("INSERT INTO tvs(name, host, mac, client_name, created) VALUES(?,?,?,?,?)",
+               (name.strip(), host.strip(), mac.strip(), client_name.strip(), dbm.now()))
+    db.commit()
+    return RedirectResponse("/tvs", 303)
+
+
+@router.post("/tvs/{tv_id}/edit")
+def edit_tv(tv_id: int, name: str = Form(...), host: str = Form(...),
+            mac: str = Form(""), default_matte: str = Form("flexible_antique"),
+            output_res: str = Form("4k"), auto_assign: bool = Form(False),
+            enabled: bool = Form(False),
+            db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    _tv(db, tv_id)
+    db.execute("UPDATE tvs SET name=?, host=?, mac=?, default_matte=?, output_res=?, "
+               "auto_assign=?, enabled=? WHERE id=?",
+               (name.strip(), host.strip(), mac.strip(), default_matte,
+                "1080p" if output_res == "1080p" else "4k",
+                int(auto_assign), int(enabled), tv_id))
+    db.commit()
+    worker.kick()
+    return RedirectResponse("/tvs", 303)
+
+
+@router.post("/tvs/{tv_id}/delete")
+def delete_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    _tv(db, tv_id)
+    db.execute("DELETE FROM tvs WHERE id=?", (tv_id,))
+    db.commit()
+    with contextlib.suppress(OSError):
+        config.token_path(tv_id).unlink()
+    return RedirectResponse("/tvs", 303)
+
+
+@router.get("/tvs/{tv_id}/doctor")
+def tv_doctor(request: Request, tv_id: int, db=Depends(dbm.get_db),
+              user=Depends(auth.require_admin)):
+    tv = _tv(db, tv_id)
+    steps = run_doctor(tv)
+    return render_page(request, db, "doctor.html", user, steps=steps,
+                       tv=dict(tv), paired=TVService(tv).has_token())
+
+
+@router.post("/tvs/{tv_id}/pair")
+def pair(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    svc = TVService(_tv(db, tv_id))
     try:
         svc.pair()
         return JSONResponse({"ok": True})
@@ -237,31 +518,128 @@ def pair(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
 
 
+@router.post("/tvs/{tv_id}/wake")
+def wake(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    tv = _tv(db, tv_id)
+    if not tv["mac"]:
+        raise HTTPException(400, "no MAC address set for this TV")
+    TVService(tv).wake(tv["mac"])
+    return JSONResponse({"ok": True})
+
+
+@router.get("/tvs/{tv_id}/artmode")
+def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    svc = TVService(_tv(db, tv_id))
+    try:
+        return JSONResponse(svc.artmode_settings())
+    finally:
+        svc.reset()
+
+
+@router.post("/tvs/{tv_id}/artmode")
+async def artmode_set(tv_id: int, request: Request, db=Depends(dbm.get_db),
+                      user=Depends(auth.require_admin)):
+    """Body: one or more of {artmode, brightness, color_temperature, motion_timer,
+    motion_sensitivity, brightness_sensor, slideshow_minutes, slideshow_shuffle}."""
+    body = await request.json()
+    svc = TVService(_tv(db, tv_id))
+    applied, errors = [], {}
+    try:
+        ops = {
+            "artmode": lambda v: svc.set_artmode(bool(v)),
+            "brightness": lambda v: svc.set_brightness(int(v)),
+            "color_temperature": lambda v: svc.set_color_temperature(int(v)),
+            "motion_timer": lambda v: svc.set_motion_timer(str(v)),
+            "motion_sensitivity": lambda v: svc.set_motion_sensitivity(str(v)),
+            "brightness_sensor": lambda v: svc.set_brightness_sensor(bool(v)),
+        }
+        for key, fn in ops.items():
+            if key in body:
+                try:
+                    fn(body[key])
+                    applied.append(key)
+                except (TVError, ValueError) as e:
+                    errors[key] = str(e)
+        if "slideshow_minutes" in body:
+            try:
+                svc.set_slideshow(int(body["slideshow_minutes"]),
+                                  bool(body.get("slideshow_shuffle", True)))
+                applied.append("slideshow")
+            except (TVError, ValueError) as e:
+                errors["slideshow"] = str(e)
+    finally:
+        svc.reset()
+    return JSONResponse({"ok": not errors, "applied": applied, "errors": errors},
+                        status_code=200 if not errors else 502)
+
+
+@router.post("/tvs/{tv_id}/import")
+def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    _tv(db, tv_id)
+    if worker.import_state["running"]:
+        raise HTTPException(409, "an import is already running")
+    worker.start_import(tv_id)
+    return RedirectResponse("/", 303)
+
+
+@router.get("/tvs/{tv_id}/export")
+def export_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    tv = _tv(db, tv_id)
+    token = ""
+    with contextlib.suppress(OSError):
+        token = config.token_path(tv_id).read_text().strip()
+    return JSONResponse({"env": "\n".join([
+        f"TV_HOST={tv['host']}", f"TV_NAME={tv['name']}",
+        f"TV_CLIENT_NAME={tv['client_name']}", f"TV_MAC={tv['mac']}",
+        f"TV_TOKEN={token}"])})
+
+
+# ---------------------------------------------------------------- schedules
+@router.post("/tvs/{tv_id}/schedules")
+def add_schedule(tv_id: int, mode: str = Form("random"),
+                 interval_minutes: int = Form(60), time_start: str = Form(""),
+                 time_end: str = Form(""), days: list[str] = Form([]),
+                 tag: str = Form(""),
+                 db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    _tv(db, tv_id)
+    if mode not in ("random", "sequential", "favorites"):
+        raise HTTPException(400, "bad mode")
+    daystr = "".join(sorted(set(d for d in days if d in "0123456"))) or "0123456"
+    db.execute("INSERT INTO schedules(tv_id, mode, interval_minutes, time_start, "
+               "time_end, days, tag) VALUES(?,?,?,?,?,?,?)",
+               (tv_id, mode, max(1, interval_minutes), time_start.strip(),
+                time_end.strip(), daystr, tag.strip()))
+    db.commit()
+    return RedirectResponse("/tvs", 303)
+
+
+@router.post("/schedules/{sid}")
+def edit_schedule(sid: int, action: str = Form(...),
+                  db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    if action == "toggle":
+        db.execute("UPDATE schedules SET enabled=1-enabled WHERE id=?", (sid,))
+    elif action == "delete":
+        db.execute("DELETE FROM schedules WHERE id=?", (sid,))
+    else:
+        raise HTTPException(400)
+    db.commit()
+    return RedirectResponse("/tvs", 303)
+
+
 # --------------------------------------------------------------------- admin
 @router.get("/admin")
 def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
     users = db.execute("SELECT * FROM users ORDER BY created").fetchall()
-    slideshow = None
-    if _svc(db).has_token() and worker.status["tv_ok"]:
-        with contextlib.suppress(TVError, Exception):
-            svc = _svc(db)
-            slideshow = svc.slideshow()
-            svc.reset()
-    return render(request, db, "admin.html", user, users=[dict(u) for u in users],
-                  settings=config.all_settings(db), slideshow=slideshow,
-                  presets=SLIDESHOW_PRESETS,
-                  export_env=_export_env(db))
+    return render_page(request, db, "admin.html", user,
+                       users=[dict(u) for u in users],
+                       settings=config.all_settings(db),
+                       watch=status_watch(db))
 
 
-def _export_env(db) -> str:
-    token = ""
-    with contextlib.suppress(OSError):
-        token = config.TOKEN_PATH.read_text().strip()
-    return "\n".join([
-        f"TV_HOST={config.get(db, 'tv_host')}",
-        f"TV_CLIENT_NAME={config.get(db, 'tv_client_name')}",
-        f"TV_TOKEN={token}",
-    ])
+@router.get("/admin/logs")
+def admin_logs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    from . import logbuf
+    return JSONResponse({"logs": logbuf.recent()})
 
 
 @router.post("/admin/settings")
@@ -333,23 +711,3 @@ def edit_user(uid: int, action: str = Form(...), password: str = Form(""),
         raise HTTPException(400, "unknown action")
     db.commit()
     return RedirectResponse("/admin", 303)
-
-
-@router.post("/admin/slideshow")
-def set_slideshow(minutes: int = Form(...), shuffle: bool = Form(False),
-                  db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
-    try:
-        svc = _svc(db)
-        svc.set_slideshow(minutes, shuffle)
-        svc.reset()
-    except (TVError, ValueError) as e:
-        raise HTTPException(502, str(e)) from e
-    return RedirectResponse("/admin", 303)
-
-
-@router.post("/admin/import-tv")
-def import_tv(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
-    if worker.import_state["running"]:
-        raise HTTPException(409, "import already running")
-    worker.start_import()
-    return RedirectResponse("/", 303)

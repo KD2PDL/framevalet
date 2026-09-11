@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>TVs</h1>
+  <p class="muted">Every Frame this library pushes to.</p>
+  {% if import_state.running %}
+  <p class="import-line">Importing from TV: {{ import_state.done }}/{{ import_state.total }}</p>
+  {% endif %}
+</div>
+
+{% set daynames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] %}
+{% for t in tv_details %}
+<section class="tv-card" data-pairwrap data-tv="{{ t.id }}">
+  <div class="tv-head">
+    <h2>{{ t.name }}</h2>
+    <span class="pill js-tvpill {{ 'pill-ok' if t.status.ok else 'pill-warn' }}">
+      <span class="pill-dot"></span><span class="js-tvpill-text">{{ 'connected' if t.status.ok else 'unreachable' }}</span>
+    </span>
+    {% if t.paired %}<span class="tag">paired</span>{% else %}<span class="tag tag-red">not paired</span>{% endif %}
+    {% if not t.enabled %}<span class="tag tag-red">disabled</span>{% endif %}
+  </div>
+  <p class="muted tv-sub">
+    {{ t.host }} &middot; {{ t.photo_count }} photo{{ '' if t.photo_count == 1 else 's' }} on TV
+    {%- if t.status.pushing %} &middot; pushing {{ t.status.pushing }}{% endif %}
+  </p>
+  <p class="tv-err" {% if t.status.ok or not t.status.error %}hidden{% endif %}>{{ t.status.error or '' }}</p>
+
+  <div class="tv-actions">
+    <a class="btn btn-sm" href="/tvs/{{ t.id }}/doctor">Doctor</a>
+    <button type="button" class="btn btn-sm {{ 'btn-primary' if not t.paired }} js-pair" data-url="/tvs/{{ t.id }}/pair">{{ 'Pair' if not t.paired else 'Re-pair' }}</button>
+    {% if t.mac %}
+    <button type="button" class="btn btn-sm js-wake" data-url="/tvs/{{ t.id }}/wake">Wake</button>
+    {% endif %}
+    <form method="post" action="/tvs/{{ t.id }}/import">
+      <button class="btn btn-sm" {% if import_state.running %}disabled title="An import is already running"{% endif %}>Import photos from TV</button>
+    </form>
+    <button type="button" class="btn btn-sm js-export" data-url="/tvs/{{ t.id }}/export" data-name="{{ t.name }}">Export connection</button>
+    <form method="post" action="/tvs/{{ t.id }}/delete" data-confirm="Delete TV {{ t.name }}? Its queue and schedules go with it.">
+      <button class="btn btn-sm btn-danger">Delete TV</button>
+    </form>
+  </div>
+  <div class="pair-panel" hidden>
+    <div class="pair-spinner"></div>
+    <p><strong>Look at the TV</strong> &mdash; press <strong>Allow</strong> on the remote now.</p>
+    <p class="muted">Waiting for the TV&hellip; <span class="pair-count">60</span>s</p>
+  </div>
+  <div class="form-error pair-error" hidden></div>
+
+  <details class="tv-fold">
+    <summary>Edit</summary>
+    <form method="post" action="/tvs/{{ t.id }}/edit" class="tv-edit">
+      <label>Name <input type="text" name="name" value="{{ t.name }}" required></label>
+      <label>Host (IP) <input type="text" name="host" value="{{ t.host }}" required></label>
+      <label>MAC address <input type="text" name="mac" value="{{ t.mac }}" placeholder="AA:BB:CC:DD:EE:FF"></label>
+      <label>Default matte <input type="text" name="default_matte" value="{{ t.default_matte }}"></label>
+      <label>Output resolution
+        <select name="output_res">
+          <option value="4k" {% if t.output_res == '4k' %}selected{% endif %}>4K</option>
+          <option value="1080p" {% if t.output_res == '1080p' %}selected{% endif %}>1080p</option>
+        </select>
+      </label>
+      <label class="check-label"><input type="checkbox" name="auto_assign" value="true" {% if t.auto_assign %}checked{% endif %}> New photos queue here automatically</label>
+      <label class="check-label"><input type="checkbox" name="enabled" value="true" {% if t.enabled %}checked{% endif %}> Enabled</label>
+      <button class="btn btn-primary btn-sm">Save</button>
+    </form>
+  </details>
+
+  <details class="tv-fold am" data-artmode data-tv="{{ t.id }}">
+    <summary>Art Mode settings</summary>
+    <div class="am-body">
+      <div class="am-loading" data-am-spin hidden><span class="pair-spinner"></span> Asking the TV&hellip;</div>
+      <div class="am-grid" data-am-form hidden>
+        <label class="check-label"><input type="checkbox" data-key="artmode"> Art Mode on</label>
+        <label class="check-label"><input type="checkbox" data-key="brightness_sensor"> Brightness sensor</label>
+        <label class="am-slider">Brightness <output data-out="brightness"></output>
+          <input type="range" min="0" max="10" step="1" data-key="brightness">
+        </label>
+        <label class="am-slider">Color temperature <output data-out="color_temperature"></output>
+          <input type="range" min="-5" max="5" step="1" data-key="color_temperature">
+        </label>
+        <label>Motion timer
+          <select data-key="motion_timer">
+            {% for v in motion_timer_values %}<option value="{{ v }}">{{ 'Off' if v == 'off' else v ~ ' min' }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Motion sensitivity
+          <select data-key="motion_sensitivity">
+            {% for v in motion_sensitivity %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>TV slideshow
+          <select data-key="slideshow_minutes">
+            {% for m in slideshow_presets %}<option value="{{ m }}">{{ 'Off' if m == 0 else 'Every ' ~ m ~ ' min' }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="check-label"><input type="checkbox" data-key="slideshow_shuffle" checked> Shuffle</label>
+        <div class="am-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-am-apply>Apply</button>
+          <span class="hint" data-am-note hidden></span>
+        </div>
+      </div>
+      <div class="form-error" data-am-error hidden></div>
+    </div>
+  </details>
+
+  <div class="sched">
+    <h3>Schedules</h3>
+    <p class="hint">App-driven rotation. Turn the TV's own slideshow Off above if you use this.</p>
+    {% for s in t.schedules %}
+    <div class="sched-row{{ ' sched-off' if not s.enabled }}">
+      <div class="sched-desc">
+        <strong>{{ s.mode }}</strong> &middot; every {{ s.interval_minutes }} min
+        {%- if s.time_start or s.time_end %} &middot; {{ s.time_start or '00:00' }}&ndash;{{ s.time_end or '24:00' }}{% endif %}
+        &middot; {% for i in range(7) %}{% if i | string in s.days %}{{ daynames[i] }}{% if not loop.last %} {% endif %}{% endif %}{% endfor %}
+        {%- if s.tag %} &middot; tag: {{ s.tag }}{% endif %}
+        {% if not s.enabled %}<span class="tag tag-red">off</span>{% endif %}
+      </div>
+      <form method="post" action="/schedules/{{ s.id }}">
+        <input type="hidden" name="action" value="toggle">
+        <button class="btn btn-sm">{{ 'Disable' if s.enabled else 'Enable' }}</button>
+      </form>
+      <form method="post" action="/schedules/{{ s.id }}" data-confirm="Delete this schedule?">
+        <input type="hidden" name="action" value="delete">
+        <button class="btn btn-sm btn-danger">Delete</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="muted">No schedules for this TV.</p>
+    {% endfor %}
+    <details class="tv-fold">
+      <summary>Add schedule</summary>
+      <form method="post" action="/tvs/{{ t.id }}/schedules" class="sched-form">
+        <label>Mode
+          <select name="mode">
+            <option value="random">random</option>
+            <option value="sequential">sequential</option>
+            <option value="favorites">favorites</option>
+          </select>
+        </label>
+        <label>Every (minutes) <input type="number" name="interval_minutes" value="60" min="1" required></label>
+        <label>From <input type="time" name="time_start"></label>
+        <label>Until <input type="time" name="time_end"></label>
+        <fieldset class="sched-days">
+          <legend>Days</legend>
+          {% for i in range(7) %}
+          <label class="check-label"><input type="checkbox" name="days" value="{{ i }}" checked> {{ daynames[i] }}</label>
+          {% endfor %}
+        </fieldset>
+        <label>Only tag (optional) <input type="text" name="tag"></label>
+        <button class="btn btn-primary btn-sm">Add schedule</button>
+      </form>
+    </details>
+  </div>
+</section>
+{% else %}
+<div class="empty-state">
+  <p>No TVs yet. Add your first Frame below.</p>
+</div>
+{% endfor %}
+
+<section class="tv-card tv-add">
+  <h2>Add TV</h2>
+  <div class="scan-block">
+    <button type="button" class="btn" id="scanBtn">Scan network</button>
+    <div class="scan-results" id="scanResults" hidden></div>
+    <p class="muted" id="scanEmpty" hidden>Nothing found. SSDP can't cross Docker bridge networking or VLANs — add the TV by IP below.</p>
+  </div>
+  <form method="post" action="/tvs" class="tv-edit" id="addTvForm">
+    <label>Name <input type="text" name="name" placeholder="Living room" required></label>
+    <label>Host (IP) <input type="text" name="host" placeholder="192.168.1.50" required></label>
+    <label>MAC address (optional, for Wake) <input type="text" name="mac" placeholder="AA:BB:CC:DD:EE:FF"></label>
+    <label>Client name <input type="text" name="client_name" value="framevalet"></label>
+    <button class="btn btn-primary">Add TV</button>
+  </form>
+</section>
+
+<div class="overlay" id="exportModal" hidden>
+  <div class="overlay-backdrop" data-export-close></div>
+  <div class="overlay-panel export-panel" role="dialog" aria-modal="true">
+    <button type="button" class="overlay-close" data-export-close aria-label="Close">&times;</button>
+    <div class="overlay-body">
+      <h3 id="exportTitle">Export connection</h3>
+      <p class="muted">Move this connection to another machine without re-pairing.</p>
+      <textarea readonly rows="6" id="exportEnv" class="export-box"></textarea>
+      <button type="button" class="btn btn-sm" data-copy="#exportEnv">Copy to clipboard</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

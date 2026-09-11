@@ -12,44 +12,74 @@
 {% endif %}
 
 <div class="statusline">
-  <span id="countsLine">{{ counts.on_tv }} on TV &middot; {{ counts.queued }} queued{% if counts.processing %} &middot; {{ counts.processing }} processing{% endif %}{% if counts.failed %} &middot; {{ counts.failed }} failed{% endif %}</span>
+  <span id="countsLine">&nbsp;</span>
   <span id="importLine" class="import-line" {% if not import_state.running %}hidden{% endif %}>Importing from TV: <span id="importProgress">{{ import_state.done }}/{{ import_state.total }}</span></span>
+  {% if import_state.error %}<span class="import-err">Import error: {{ import_state.error }}</span>{% endif %}
 </div>
 
-<div class="chips" id="filterChips">
-  <button type="button" class="chip active" data-filter="all">All</button>
-  <button type="button" class="chip" data-filter="on_tv">On TV</button>
-  <button type="button" class="chip" data-filter="queued">Queued</button>
-  <button type="button" class="chip" data-filter="failed">Failed</button>
-  <button type="button" class="chip" data-filter="external">External</button>
+<div class="toolbar">
+  <div class="chips" id="filterChips">
+    <button type="button" class="chip active" data-filter="all">All</button>
+    <button type="button" class="chip" data-filter="on_tv">On TV</button>
+    <button type="button" class="chip" data-filter="queued">Queued</button>
+    <button type="button" class="chip" data-filter="failed">Failed</button>
+    <button type="button" class="chip" data-filter="favorites">Favorites</button>
+    <button type="button" class="chip" data-filter="external">External</button>
+  </div>
+  <div class="toolbar-right">
+    {% if all_tags %}
+    <select id="tagFilter" class="tag-filter" aria-label="Filter by tag">
+      <option value="">All tags</option>
+      {% for t in all_tags %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <button type="button" class="btn btn-sm" id="discoverBtn">Discover art</button>
+    <button type="button" class="btn btn-sm" id="selectToggle" aria-pressed="false">Select</button>
+  </div>
 </div>
 
 <div class="grid" id="photoGrid">
   {% for p in photos %}
+  {% set sts = p.tv_states.values() | map(attribute='status') | list %}
+  {% set assigned = sts | reject('equalto', 'removed') | list %}
+  {% set n_on = assigned | select('equalto', 'on_tv') | list | length %}
+  {% set n_q = assigned | select('equalto', 'queued') | list | length %}
+  {% set n_f = assigned | select('equalto', 'failed') | list | length %}
+  {% set errs = p.tv_states.values() | selectattr('status', 'equalto', 'failed') | map(attribute='error') | select | list %}
   <figure class="card" tabindex="0" role="button"
     data-id="{{ p.id }}"
-    data-status="{{ p.status }}"
-    data-source="{{ p.source }}"
     data-filename="{{ p.filename }}"
     data-taken="{{ p.taken_date or '' }}"
     data-uploader="{{ p.uploader or '' }}"
+    data-source="{{ p.source }}"
+    data-style="{{ p.style }}"
+    data-matte="{{ p.matte or '' }}"
+    data-fav="{{ '1' if p.favorite else '0' }}"
     data-candelete="{{ '1' if p.can_delete else '0' }}"
+    data-croppable="{{ '1' if p.croppable else '0' }}"
+    data-ontv="{{ n_on }}" data-queued="{{ n_q }}" data-failed="{{ n_f }}"
+    data-assigned="{{ assigned | length }}"
+    data-tags='{{ p.tags | tojson }}'
+    data-states='{{ p.tv_states | tojson }}'
+    data-edits='{{ (p.edits or "") | tojson }}'
     data-thumb="{{ '1' if p.thumb_path else '0' }}">
     {% if p.thumb_path %}
     <img src="/thumbs/{{ p.id }}.jpg" alt="{{ p.filename }}" loading="lazy">
     {% else %}
     <div class="card-placeholder"><span>{{ p.filename }}</span></div>
     {% endif %}
-    {% if p.source == 'external' %}
-    <span class="badge badge-external"><span class="dot"></span>external</span>
-    {% elif p.status == 'on_tv' %}
-    <span class="badge badge-ontv"><span class="dot"></span>on TV</span>
-    {% elif p.status == 'failed' %}
-    <span class="badge badge-failed"><span class="dot"></span>failed</span>
-    {% elif p.status == 'processing' %}
-    <span class="badge badge-queued"><span class="dot"></span>processing</span>
-    {% else %}
-    <span class="badge badge-queued"><span class="dot"></span>queued</span>
+    <span class="sel-check" aria-hidden="true">&#10003;</span>
+    <button type="button" class="fav{{ ' is-fav' if p.favorite }}" data-fav
+      aria-pressed="{{ 'true' if p.favorite else 'false' }}"
+      aria-label="Favorite {{ p.filename }}">&#9733;</button>
+    {% if p.source in ('folder', 'import', 'external') %}
+    <span class="chip-src chip-src-{{ p.source }}">{{ p.source }}</span>
+    {% endif %}
+    {% if assigned | length == 1 %}
+      {% set st = assigned[0] %}
+      <span class="badge badge-{{ 'ontv' if st == 'on_tv' else ('failed' if st == 'failed' else 'queued') }}"{% if st == 'failed' and errs %} title="{{ errs | join(' · ') }}"{% endif %}><span class="dot"></span>{{ 'on TV' if st == 'on_tv' else st }}</span>
+    {% elif assigned | length > 1 %}
+      <span class="badge badge-{{ 'failed' if n_f else ('queued' if n_q else 'ontv') }}"{% if n_f and errs %} title="{{ errs | join(' · ') }}"{% endif %}><span class="dot"></span>{{ n_on }}/{{ assigned | length }}</span>
     {% endif %}
   </figure>
   {% endfor %}
@@ -61,20 +91,136 @@
 </div>
 {% endif %}
 
+<div class="bulkbar" id="bulkBar" hidden>
+  <span class="bulk-count" id="bulkCount">0 selected</span>
+  <div class="bulk-actions">
+    <button type="button" class="btn btn-sm" data-bulk="favorite">&#9733; Favorite</button>
+    <button type="button" class="btn btn-sm" data-bulk="unfavorite">&#9734; Unfavorite</button>
+    <button type="button" class="btn btn-sm" data-bulk="tag">Tag</button>
+    <button type="button" class="btn btn-sm" data-bulk="untag">Untag</button>
+    <div class="bulk-menu-wrap">
+      <button type="button" class="btn btn-sm" data-menu="send_tv">Send to TV &#9662;</button>
+      <div class="bulk-menu" data-menu-for="send_tv" hidden></div>
+    </div>
+    <div class="bulk-menu-wrap">
+      <button type="button" class="btn btn-sm" data-menu="remove_tv">Remove from TV &#9662;</button>
+      <div class="bulk-menu" data-menu-for="remove_tv" hidden></div>
+    </div>
+    <button type="button" class="btn btn-sm btn-danger" data-bulk="delete">Delete</button>
+  </div>
+</div>
+
 <div class="overlay" id="overlay" hidden>
   <div class="overlay-backdrop" id="overlayBackdrop"></div>
   <div class="overlay-panel" role="dialog" aria-modal="true">
     <button type="button" class="overlay-close" id="overlayClose" aria-label="Close">&times;</button>
-    <div class="overlay-imgwrap"><img id="overlayImg" alt=""></div>
-    <div class="overlay-meta">
-      <strong id="ovName"></strong>
-      <span class="muted" id="ovTaken"></span>
-      <span class="muted" id="ovUploader"></span>
+    <div class="overlay-imgwrap">
+      <img id="overlayImg" alt="">
+      <button type="button" class="btn btn-sm ov-crop-btn" id="ovCrop" hidden>Crop</button>
     </div>
-    <div class="overlay-actions">
-      <button type="button" class="btn btn-primary" id="ovDisplay" hidden>Show on TV now</button>
-      <button type="button" class="btn btn-danger" id="ovDelete" hidden>Delete</button>
+    <div class="overlay-body">
+      <div class="overlay-meta">
+        <input type="text" id="ovName" class="ov-title-input" aria-label="Photo title" maxlength="120">
+        <div class="ov-date-row">
+          <span class="muted" id="ovTaken"></span>
+          <button type="button" class="btn btn-ghost btn-sm ov-date-edit" id="ovDateEdit" aria-label="Edit date">&#9998;</button>
+        </div>
+        <div class="ov-date-form" id="ovDateForm" hidden>
+          <input type="datetime-local" id="ovDateInput" aria-label="Taken date">
+          <button type="button" class="btn btn-sm" id="ovDateSave">Save</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="ovDateClear">Clear</button>
+        </div>
+        <p class="hint" id="ovDateHint" hidden>Changing the date re-sends the photo to its TVs.</p>
+        <span class="muted" id="ovUploader"></span>
+      </div>
+      <div class="ov-tags">
+        <label for="ovTags">Tags</label>
+        <div class="ov-tags-row">
+          <input type="text" id="ovTags" placeholder="comma, separated">
+          <button type="button" class="btn btn-sm" id="ovTagsSave">Save</button>
+        </div>
+      </div>
+      <div class="ov-section" id="ovStyleMatte" hidden>
+        <label class="ov-style" id="ovStyleRow" hidden>Style
+          <select id="ovStyle">
+            <option value="fit">Fit (letterbox)</option>
+            <option value="blurfill">Blur fill</option>
+          </select>
+        </label>
+        <div class="ov-matte" id="ovMatteWrap" hidden>
+          <span class="ov-label">Matte</span>
+          <div class="matte-types" id="matteTypes">
+            <button type="button" class="chip" data-mtype="">TV default</button>
+            {% for mt in matte_types %}
+            <button type="button" class="chip" data-mtype="{{ mt }}">{{ 'no mat' if mt == 'none' else mt }}</button>
+            {% endfor %}
+          </div>
+          <div class="matte-colors" id="matteColors" hidden>
+            {% for name, hex in matte_colors %}
+            <button type="button" class="matte-swatch" data-mcolor="{{ name }}"
+              style="background: #{{ hex }}" title="{{ name }}" aria-label="Matte color {{ name }}"></button>
+            {% endfor %}
+          </div>
+          <div class="ov-matte-actions">
+            <button type="button" class="btn btn-sm btn-primary" id="matteApply">Apply matte</button>
+          </div>
+        </div>
+      </div>
+      <div class="ov-tvrows" id="ovTvRows"></div>
+      <div class="overlay-actions">
+        <button type="button" class="btn btn-danger" id="ovDelete" hidden>Delete</button>
+      </div>
     </div>
+  </div>
+</div>
+
+<div class="crop-editor" id="cropEditor" hidden>
+  <div class="crop-top">
+    <span class="crop-title">Crop</span>
+    <div class="crop-aspects" id="cropAspects">
+      <button type="button" class="chip active" data-aspect="">Free</button>
+      <button type="button" class="chip" data-aspect="1.7778">16:9</button>
+      <button type="button" class="chip" data-aspect="1.5">3:2</button>
+      <button type="button" class="chip" data-aspect="1">1:1</button>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm" id="cropCancel">Cancel</button>
+  </div>
+  <div class="crop-stage" id="cropStage">
+    <img id="cropImg" alt="Crop preview" draggable="false">
+    <div class="crop-box" id="cropBox">
+      <span class="ch ch-nw" data-h="nw"></span><span class="ch ch-n" data-h="n"></span>
+      <span class="ch ch-ne" data-h="ne"></span><span class="ch ch-e" data-h="e"></span>
+      <span class="ch ch-se" data-h="se"></span><span class="ch ch-s" data-h="s"></span>
+      <span class="ch ch-sw" data-h="sw"></span><span class="ch ch-w" data-h="w"></span>
+    </div>
+  </div>
+  <div class="crop-bottom">
+    <button type="button" class="btn" id="cropClear">Clear crop</button>
+    <button type="button" class="btn btn-primary" id="cropSave">Save crop</button>
+  </div>
+</div>
+
+<div class="art-panel" id="artPanel" hidden>
+  <div class="art-top">
+    <span class="art-title">Discover art</span>
+    <select id="artSource" aria-label="Art source">
+      <option value="openverse">Openverse</option>
+      <option value="nasa">NASA APOD</option>
+      <option value="reddit">Reddit</option>
+      <option value="rijksmuseum">Rijksmuseum</option>
+      <option value="unsplash">Unsplash</option>
+      <option value="pexels">Pexels</option>
+      <option value="pixabay">Pixabay</option>
+    </select>
+    <input type="search" id="artQuery" placeholder="Search for art">
+    <button type="button" class="btn btn-primary btn-sm" id="artSearch">Search</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="artClose" aria-label="Close discover panel">&#10005;</button>
+  </div>
+  <div class="form-error art-note" id="artNote" hidden></div>
+  <div class="art-body">
+    <div class="art-grid" id="artGrid"></div>
+    <p class="art-empty" id="artEmpty" hidden>No results.</p>
+    <div class="art-more"><button type="button" class="btn" id="artMore" hidden>More</button></div>
   </div>
 </div>
 

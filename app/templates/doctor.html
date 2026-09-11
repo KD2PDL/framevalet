@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <h1>TV Doctor</h1>
-  <p class="muted">Checks against <code>{{ host or 'no host configured' }}</code></p>
+  <a class="back-link" href="/tvs">&larr; TVs</a>
+  <h1>Doctor &mdash; {{ tv.name }}</h1>
+  <p class="muted">Checks against <code>{{ tv.host or 'no host configured' }}</code></p>
 </div>
 
 <ol class="checklist">
@@ -20,19 +21,20 @@
   {% endfor %}
 </ol>
 
-<div class="doctor-actions">
-  {% if not paired %}
-  <button type="button" class="btn btn-primary" id="pairBtn">Pair with TV</button>
-  {% else %}
-  <span class="pill pill-ok"><span class="pill-dot"></span>Paired</span>
-  {% endif %}
-  <button type="button" class="btn btn-ghost" id="rerunBtn">Re-run checks</button>
+<div data-pairwrap>
+  <div class="doctor-actions">
+    {% if not paired %}
+    <button type="button" class="btn btn-primary js-pair" data-url="/tvs/{{ tv.id }}/pair">Pair with TV</button>
+    {% else %}
+    <span class="pill pill-ok"><span class="pill-dot"></span>Paired</span>
+    {% endif %}
+    <button type="button" class="btn btn-ghost" id="rerunBtn">Re-run checks</button>
+  </div>
+  <div class="pair-panel" hidden>
+    <div class="pair-spinner"></div>
+    <p><strong>Look at the TV</strong> &mdash; press <strong>Allow</strong> on the remote now.</p>
+    <p class="muted">Waiting for the TV&hellip; <span class="pair-count">60</span>s</p>
+  </div>
+  <div class="form-error pair-error" hidden></div>
 </div>
-
-<div class="pair-panel" id="pairPanel" hidden>
-  <div class="pair-spinner"></div>
-  <p><strong>Look at the TV</strong> &mdash; press <strong>Allow</strong> on the remote now.</p>
-  <p class="muted">Waiting for the TV&hellip; <span id="pairCount">60</span>s</p>
-</div>
-<div class="form-error" id="pairError" hidden></div>
 {% endblock %}

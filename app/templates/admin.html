@@ -5,6 +5,8 @@
   <nav class="anchor-nav">
     <a href="#users">Users</a>
     <a href="#settings">Settings</a>
+    <a href="#automation">Automation</a>
+    <a href="#logs">Logs</a>
   </nav>
 </div>
 
@@ -77,17 +79,21 @@
 
   <div class="settings-grid">
     {% set fields = [
-      ('tv_host', 'TV host', 'text'),
-      ('tv_client_name', 'TV client name', 'text'),
-      ('tv_mac', 'TV MAC address', 'text'),
-      ('default_matte', 'Default matte', 'text'),
-      ('jpeg_quality', 'JPEG quality', 'number'),
-      ('keep_originals', 'Keep original files', 'bool'),
-      ('brand_name', 'Brand name', 'text'),
-      ('brand_accent', 'Accent color', 'color'),
-      ('reconcile_minutes', 'Reconcile every (minutes)', 'number'),
+      ('default_style', 'Default style', 'choice', ['fit', 'blurfill']),
+      ('jpeg_quality', 'JPEG quality', 'number', none),
+      ('unsharp', 'Unsharp on renders', 'bool', none),
+      ('brand_name', 'Brand name', 'text', none),
+      ('brand_accent', 'Accent color', 'color', none),
+      ('reconcile_minutes', 'Reconcile every (minutes)', 'number', none),
+      ('watch_enabled', 'Folder watcher', 'bool', none),
+      ('watch_interval', 'Watch scan every (seconds)', 'number', none),
+      ('rclone_remote', 'rclone remote', 'text', 'onedrive:Frame TV Photos'),
+      ('rclone_interval', 'rclone sync every (seconds)', 'number', none),
+      ('unsplash_key', 'Unsplash API key', 'text', none),
+      ('pexels_key', 'Pexels API key', 'text', none),
+      ('pixabay_key', 'Pixabay API key', 'text', none),
     ] %}
-    {% for key, label, kind in fields %}
+    {% for key, label, kind, extra in fields %}
     {% set s = settings[key] %}
     <form method="post" action="/admin/settings" class="setting-row">
       <input type="hidden" name="key" value="{{ key }}">
@@ -98,12 +104,18 @@
           <option value="true" {% if s.value == 'true' %}selected{% endif %}>true</option>
           <option value="false" {% if s.value != 'true' %}selected{% endif %}>false</option>
         </select>
+        {% elif kind == 'choice' %}
+        <select name="value" {% if s.env_pinned %}disabled{% endif %}>
+          {% for opt in extra %}
+          <option value="{{ opt }}" {% if s.value == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
         {% elif kind == 'color' %}
         <input type="color" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
         {% elif kind == 'number' %}
         <input type="number" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
         {% else %}
-        <input type="text" name="value" value="{{ s.value or '' }}" {% if s.env_pinned %}disabled{% endif %}>
+        <input type="text" name="value" value="{{ s.value or '' }}" {% if extra %}placeholder="{{ extra }}"{% endif %} {% if s.env_pinned %}disabled{% endif %}>
         {% endif %}
       </label>
       {% if not s.env_pinned %}<button class="btn btn-sm">Save</button>{% endif %}
@@ -118,38 +130,37 @@
       <button class="btn btn-sm">Upload logo</button>
     </form>
   </div>
+</section>
 
+<section id="automation" class="admin-section">
+  <h2>Automation</h2>
   <div class="panel">
-    <h3>Slideshow</h3>
-    <form method="post" action="/admin/slideshow" class="row-form">
-      <label>Change photo
-        <select name="minutes">
-          {% for m in presets %}
-          <option value="{{ m }}" {% if slideshow and slideshow.get('duration')|string == m|string %}selected{% endif %}>
-            {{ 'Off' if m == 0 else 'Every ' ~ m ~ ' min' }}
-          </option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="check-label"><input type="checkbox" name="shuffle" value="true" {% if slideshow and slideshow.get('shuffle') %}checked{% endif %}> Shuffle</label>
-      <button class="btn btn-sm">Apply</button>
-    </form>
-    {% if not slideshow %}<p class="muted">TV not reachable right now; current slideshow state unknown.</p>{% endif %}
+    <h3>Automation status</h3>
+    <p class="status-item">
+      Folder watcher: {{ watch.watch.seen }} file{{ '' if watch.watch.seen == 1 else 's' }} seen,
+      last scan <span data-ago="{{ watch.watch.last_scan }}">&hellip;</span>
+      {% if watch.watch.last_error %}<span class="status-err">{{ watch.watch.last_error }}</span>{% endif %}
+    </p>
+    <p class="status-item">
+      {% if not watch.rclone.available %}
+      rclone: not installed
+      {% else %}
+      rclone: last sync <span data-ago="{{ watch.rclone.last_sync }}">&hellip;</span>
+      {% endif %}
+      {% if watch.rclone.last_error %}<span class="status-err">{{ watch.rclone.last_error }}</span>{% endif %}
+    </p>
   </div>
+</section>
 
+<section id="logs" class="admin-section">
+  <h2>Logs</h2>
   <div class="panel">
-    <h3>Import photos from TV</h3>
-    <p class="muted">Adopts everything already on the TV into the library, so it can be managed here.</p>
-    <form method="post" action="/admin/import-tv">
-      <button class="btn btn-primary">Import photos from TV</button>
-    </form>
-  </div>
-
-  <div class="panel">
-    <h3>Export connection</h3>
-    <p class="muted">Move this connection to another machine without re-pairing.</p>
-    <textarea readonly rows="3" id="exportEnv" class="export-box">{{ export_env }}</textarea>
-    <button type="button" class="btn btn-sm" data-copy="#exportEnv">Copy to clipboard</button>
+    <div class="log-controls">
+      <button type="button" class="btn btn-sm" id="logsRefresh">Refresh</button>
+      <label class="check-label"><input type="checkbox" id="logsAuto"> Auto-refresh (5s)</label>
+    </div>
+    <div class="log-box" id="logBox"><p class="muted">Loading&hellip;</p></div>
+    <p class="hint">Recent app events only. Full history: <code>journalctl -u framevalet</code> or <code>docker logs</code>.</p>
   </div>
 </section>
 {% endblock %}

@@ -1,4 +1,4 @@
-"""Samsung Frame TV service layer.
+"""Samsung Frame TV service layer (one instance per TV row).
 
 Battle-tested behavior encoded here (learned against a real QN55LS03H):
 - ms.channel.timeOut  -> pairing popup unanswered or suppressed (TV must be on the
@@ -6,11 +6,12 @@ Battle-tested behavior encoded here (learned against a real QN55LS03H):
 - ms.channel.unauthorized -> TV actively denying: Device Connect Manager access
   notification off, our client on the deny list, or IP Remote disabled
 - the client NAME and token are a pair; changing the name invalidates the token
+- pairing holds ONE connection open for ~60s and never retry-loops (each retry
+  re-pops the TV's Allow prompt)
 - sustained uploads occasionally drop the data socket: retry with backoff and a
   fresh connection absorbs it
-- a crash between upload and journaling makes a TV-side orphan: reconcile by
-  diffing available() against our manifest, and NEVER delete by MY_ prefix,
-  because family members add their own photos via SmartThings
+- NEVER delete by MY_ prefix; only via our per-TV manifest, because family
+  members add their own photos via SmartThings
 - slideshow durations are firmware presets (3 works where 10 errors with -7)
 """
 import contextlib
@@ -23,7 +24,20 @@ from samsungtvws import SamsungTVWS
 
 from . import config
 
-SLIDESHOW_PRESETS = [0, 3, 30, 60, 180, 360, 720, 1440]  # 0 = off; firmware rejects others
+SLIDESHOW_PRESETS = [0, 3, 30, 60, 180, 360, 720, 1440]  # 0 = off
+MATTE_TYPES = ["none", "modernthin", "modern", "modernwide", "flexible",
+               "shadowbox", "panoramic", "triptych", "mix", "squares"]
+MATTE_COLORS = [  # name, RGB (as reported by a real Frame's get_matte_list)
+    ("black", "222221"), ("neutral", "898886"), ("antique", "e0dbd2"),
+    ("warm", "e7e7df"), ("polar", "e8e6e7"), ("sand", "a49171"),
+    ("seafoam", "5a6865"), ("sage", "aab08d"), ("burgandy", "62272e"),
+    ("navy", "27354a"), ("apricot", "efbc60"), ("byzantine", "885689"),
+    ("lavender", "b6abb1"), ("redorange", "db6742"), ("skyblue", "69c0d3"),
+    ("turquoise", "2e968d")]
+MOTION_TIMER_VALUES = ["off", "5", "15", "30", "60", "120", "240"]  # minutes
+MOTION_SENSITIVITY = ["1", "2", "3"]
+BRIGHTNESS_RANGE = range(0, 11)
+COLOR_TEMP_RANGE = range(-5, 6)
 
 
 class TVError(Exception):
@@ -39,16 +53,18 @@ class TVUnauthorized(TVError):
 
 
 class TVService:
-    def __init__(self, host: str, client_name: str):
-        self.host = host
-        self.client_name = client_name
+    def __init__(self, tv_row):
+        """tv_row: sqlite Row or dict with id, host, client_name."""
+        self.tv_id = tv_row["id"]
+        self.host = tv_row["host"]
+        self.client_name = tv_row["client_name"]
         self._tv = None
 
     # -- connection -------------------------------------------------------
     def _art(self, timeout=30):
         if self._tv is None:
             self._tv = SamsungTVWS(host=self.host, port=8002,
-                                   token_file=str(config.TOKEN_PATH),
+                                   token_file=str(config.token_path(self.tv_id)),
                                    timeout=timeout, name=self.client_name)
         return self._tv.art()
 
@@ -93,12 +109,13 @@ class TVService:
 
     def has_token(self) -> bool:
         try:
-            return bool(config.TOKEN_PATH.read_text().strip())
+            return bool(config.token_path(self.tv_id).read_text().strip())
         except OSError:
             return False
 
     def pair(self, timeout=65):
-        """Blocking first connect; the TV shows the Allow popup. Raises on deny."""
+        """Blocking first connect; the TV shows the Allow popup. ONE attempt,
+        one held connection: retries would re-pop the prompt."""
         self.reset()
         try:
             self._art(timeout=timeout).supported()
@@ -106,7 +123,7 @@ class TVService:
         finally:
             self.reset()
 
-    # -- art operations ---------------------------------------------------
+    # -- art content ------------------------------------------------------
     def available(self) -> list[dict]:
         return self._call(lambda a: a.available())
 
@@ -118,24 +135,65 @@ class TVService:
         return self._call(lambda a: a.upload(
             data, file_type="JPEG", matte=matte, portrait_matte=matte, date=date))
 
-    def delete(self, content_id: str):
-        self._call(lambda a: a.delete(content_id))
+    def delete(self, content_id: str, attempts: int = 4):
+        self._call(lambda a: a.delete(content_id), attempts=attempts)
 
-    def select(self, content_id: str):
-        self._call(lambda a: a.select_image(content_id, show=True))
+    def select(self, content_id: str, attempts: int = 4):
+        self._call(lambda a: a.select_image(content_id, show=True), attempts=attempts)
 
-    def change_matte(self, content_id: str, matte: str):
-        self._call(lambda a: a.change_matte(content_id, matte))
+    def change_matte(self, content_id: str, matte: str, attempts: int = 4):
+        self._call(lambda a: a.change_matte(content_id, matte), attempts=attempts)
 
     def matte_list(self) -> dict:
         return self._call(lambda a: a.get_matte_list())
 
     def thumbnail(self, content_id: str) -> bytes | None:
-        """TV-side thumbnail for adopting existing photos; None if unsupported."""
         try:
             return self._call(lambda a: a.get_thumbnail(content_id), attempts=2)
         except TVError:
             return None
+
+    # -- art mode settings -------------------------------------------------
+    def artmode_settings(self) -> dict:
+        """Best-effort read of everything; firmware variance tolerated per-field."""
+        out = {}
+        def grab(key, fn):
+            try:
+                out[key] = self._call(fn, attempts=1)
+            except Exception:
+                out[key] = None
+        grab("artmode", lambda a: a.get_artmode())
+        grab("brightness", lambda a: a.get_brightness())
+        grab("color_temperature", lambda a: a.get_color_temperature())
+        grab("settings", lambda a: a.get_artmode_settings())
+        grab("slideshow", lambda a: a.get_slideshow_status())
+        return out
+
+    def set_artmode(self, on: bool):
+        self._call(lambda a: a.set_artmode(on))
+
+    def set_brightness(self, value: int):
+        if value not in BRIGHTNESS_RANGE:
+            raise ValueError("brightness must be 0-10")
+        self._call(lambda a: a.set_brightness(value))
+
+    def set_color_temperature(self, value: int):
+        if value not in COLOR_TEMP_RANGE:
+            raise ValueError("color temperature must be -5 to 5")
+        self._call(lambda a: a.set_color_temperature(value))
+
+    def set_motion_timer(self, value: str):
+        if value not in MOTION_TIMER_VALUES:
+            raise ValueError(f"motion timer must be one of {MOTION_TIMER_VALUES}")
+        self._call(lambda a: a.set_motion_timer(value))
+
+    def set_motion_sensitivity(self, value: str):
+        if value not in MOTION_SENSITIVITY:
+            raise ValueError("sensitivity must be 1-3")
+        self._call(lambda a: a.set_motion_sensitivity(value))
+
+    def set_brightness_sensor(self, on: bool):
+        self._call(lambda a: a.set_brightness_sensor_setting(on))
 
     def slideshow(self) -> dict:
         return self._call(lambda a: a.get_slideshow_status())
@@ -155,30 +213,32 @@ class TVService:
             s.sendto(pkt, ("255.255.255.255", 9))
 
 
-def doctor(host: str, client_name: str) -> list[dict]:
+def doctor(tv_row) -> list[dict]:
     """Ordered checks; each failure carries the exact operator fix."""
-    svc = TVService(host, client_name)
     steps = []
 
     def step(name, ok, detail, fix=""):
         steps.append({"name": name, "ok": ok, "detail": detail, "fix": fix})
         return ok
 
-    if not host:
+    if not tv_row or not tv_row["host"]:
         step("TV address", False, "No TV IP configured",
-             "Set the TV host in Settings (or the TV_HOST env var).")
+             "Add the TV (name + IP) in the TVs page, or set the TV_HOST env var.")
         return steps
+    svc = TVService(tv_row)
     if not step("Reachable", svc.port_open(),
-                f"TCP {host}:8001",
+                f"TCP {svc.host}:8001",
                 "Wrong IP, or the TV is on a different subnet/VLAN. Give the TV a "
                 "DHCP reservation in the router so its address never changes."):
         return steps
     try:
         info = svc.device_info()
         dev = info.get("device", {})
+        frame = str(dev.get("FrameTVSupport", "")).lower() == "true"
         step("Identify", True,
              f"{dev.get('name', '?')} ({dev.get('modelName', '?')}), "
-             f"PowerState {dev.get('PowerState', '?')}")
+             f"PowerState {dev.get('PowerState', '?')}"
+             + ("" if frame else " | WARNING: does not report FrameTVSupport"))
     except TVUnreachable as e:
         step("Identify", False, str(e), "Port 8001 answered but the info endpoint "
              "did not; is this actually a Samsung TV?")

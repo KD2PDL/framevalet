@@ -1,11 +1,16 @@
 """SQLite, stdlib only. One connection per request via FastAPI dependency;
-WAL mode so the background worker and web requests coexist.
+WAL mode so background workers and web requests coexist.
+
+Schema v2: multiple TVs, per-TV photo manifests, tags/favorites, and
+originals-as-source-of-truth (renders are derived, cached, disposable).
 """
 import secrets
 import sqlite3
 import time
 
 from . import config
+
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -27,26 +32,75 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires REAL NOT NULL
 );
-CREATE TABLE IF NOT EXISTS photos (
+CREATE TABLE IF NOT EXISTS tvs (
   id INTEGER PRIMARY KEY,
-  filename TEXT NOT NULL,                       -- display name
-  sha256 TEXT,                                  -- of the original upload (dedupe)
-  orig_path TEXT,                               -- may be NULL (imported/space-saver)
-  proc_path TEXT,                               -- optimized JPEG pushed to the TV
-  thumb_path TEXT,
-  width INTEGER, height INTEGER, bytes INTEGER,
-  taken_date TEXT,                              -- 'YYYY:MM:DD HH:MM:SS' (TV format)
-  matte TEXT,
-  source TEXT NOT NULL DEFAULT 'upload',        -- 'upload' | 'import' | 'external'
-  uploaded_by INTEGER REFERENCES users(id),
-  tv_content_id TEXT,
-  status TEXT NOT NULL DEFAULT 'queued',        -- queued|processing|on_tv|failed|removed
-  error TEXT,
+  name TEXT NOT NULL,
+  host TEXT NOT NULL,
+  mac TEXT DEFAULT '',
+  client_name TEXT NOT NULL DEFAULT 'framevalet',
+  default_matte TEXT NOT NULL DEFAULT 'flexible_antique',
+  output_res TEXT NOT NULL DEFAULT '4k',        -- '4k' | '1080p'
+  auto_assign INTEGER NOT NULL DEFAULT 1,       -- new photos queue here automatically
+  enabled INTEGER NOT NULL DEFAULT 1,
   created REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_photos_status ON photos(status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_photos_cid ON photos(tv_content_id)
-  WHERE tv_content_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS photos (
+  id INTEGER PRIMARY KEY,
+  filename TEXT NOT NULL,
+  sha256 TEXT,                                  -- of the ORIGINAL file
+  orig_path TEXT,                               -- source of truth; NULL only for TV imports
+  thumb_path TEXT,
+  width INTEGER, height INTEGER,                -- original dimensions
+  taken_date TEXT,                              -- 'YYYY:MM:DD HH:MM:SS' (TV format)
+  style TEXT NOT NULL DEFAULT 'fit',            -- 'fit' | 'blurfill' (portraits)
+  matte TEXT,                                   -- override; NULL = TV default
+  edits TEXT,                                   -- JSON: {"crop":[x,y,w,h]} normalized 0..1
+  favorite INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'upload',        -- upload | folder | import | external
+  folder_rel TEXT,                              -- watcher mirror key (source='folder')
+  uploaded_by INTEGER REFERENCES users(id),
+  created REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_photos_sha ON photos(sha256) WHERE sha256 IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder_rel) WHERE folder_rel IS NOT NULL;
+CREATE TABLE IF NOT EXISTS tv_photos (
+  tv_id INTEGER NOT NULL REFERENCES tvs(id) ON DELETE CASCADE,
+  photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  content_id TEXT,
+  status TEXT NOT NULL DEFAULT 'queued',        -- queued | on_tv | failed | removed
+  error TEXT,
+  matte TEXT,
+  render_key TEXT,                              -- render pushed to the TV (stale => re-push)
+  PRIMARY KEY (tv_id, photo_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tvp_status ON tv_photos(status);
+CREATE TABLE IF NOT EXISTS pending_tv_deletes (
+  tv_id INTEGER NOT NULL REFERENCES tvs(id) ON DELETE CASCADE,
+  content_id TEXT NOT NULL,
+  PRIMARY KEY (tv_id, content_id)
+);
+CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL COLLATE NOCASE
+);
+CREATE TABLE IF NOT EXISTS photo_tags (
+  photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (photo_id, tag_id)
+);
+CREATE TABLE IF NOT EXISTS schedules (
+  id INTEGER PRIMARY KEY,
+  tv_id INTEGER NOT NULL REFERENCES tvs(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL DEFAULT 'random',          -- random | sequential | favorites
+  interval_minutes INTEGER NOT NULL DEFAULT 60,
+  time_start TEXT DEFAULT '',                   -- 'HH:MM' window (empty = always)
+  time_end TEXT DEFAULT '',
+  days TEXT NOT NULL DEFAULT '0123456',         -- 0=Mon..6=Sun, chars present = active
+  tag TEXT DEFAULT '',                          -- optional tag filter
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_fired REAL NOT NULL DEFAULT 0,
+  cursor INTEGER NOT NULL DEFAULT 0             -- sequential position
+);
 """
 
 
@@ -64,8 +118,15 @@ def connect() -> sqlite3.Connection:
 def init():
     config.ensure_dirs()
     db = connect()
+    ver = db.execute("PRAGMA user_version").fetchone()[0]
+    if ver not in (0, SCHEMA_VERSION):
+        raise SystemExit(
+            f"framevalet.db is schema v{ver}; this build needs v{SCHEMA_VERSION}. "
+            "Pre-release schema change: move the old data dir aside and start fresh.")
     db.executescript(SCHEMA)
-    # session-signing secret: env wins, else generate once into settings
+    db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    with __import__("contextlib").suppress(Exception):   # pre-release column adds
+        db.execute("ALTER TABLE photos ADD COLUMN matte TEXT")
     if not config.APP_SECRET:
         row = db.execute("SELECT value FROM settings WHERE key='app_secret'").fetchone()
         if not row:

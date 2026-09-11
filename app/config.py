@@ -1,35 +1,49 @@
 """Configuration with a strict precedence: environment > database > default.
 
-Anything settable in the admin panel can also be pinned by an env var (12-factor,
-Docker-friendly). Env-pinned keys are read-only in the UI and flagged as such so
-the panel never lies about why a field won't save.
+App-wide settings live here. Per-TV settings (host, matte, resolution, art mode
+controls) live on the tvs table; the TV_* env vars seed the FIRST TV on a fresh
+boot so headless Docker deploys still work.
 """
 import os
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "./data")).resolve()
 ORIGINALS_DIR = DATA_DIR / "originals"
-PROCESSED_DIR = DATA_DIR / "processed"
+RENDERS_DIR = DATA_DIR / "renders"      # derived, cache-keyed, safe to delete
 THUMBS_DIR = DATA_DIR / "thumbs"
 BRAND_DIR = DATA_DIR / "branding"
+TOKENS_DIR = DATA_DIR / "tokens"        # one token file per TV
+WATCH_DIR = DATA_DIR / "watch"          # folder watcher root (rclone syncs here)
 DB_PATH = DATA_DIR / "framevalet.db"
-TOKEN_PATH = DATA_DIR / "tv-token.txt"
 
-# key -> (env var, default). Everything else (users, photos) lives only in the DB.
+# key -> (env var, default). App-wide only.
 SETTINGS = {
-    "tv_host":          ("TV_HOST", ""),
-    "tv_client_name":   ("TV_CLIENT_NAME", "framevalet"),
-    "tv_mac":           ("TV_MAC", ""),            # optional, for Wake-on-LAN
-    "default_matte":    ("DEFAULT_MATTE", "flexible_antique"),
-    "jpeg_quality":     ("JPEG_QUALITY", "85"),
-    "keep_originals":   ("KEEP_ORIGINALS", "true"),
+    "default_style":    ("DEFAULT_STYLE", "fit"),      # fit | blurfill
+    "jpeg_quality":     ("JPEG_QUALITY", "90"),
+    "unsharp":          ("UNSHARP", "false"),          # subtle sharpen on renders
     "brand_name":       ("BRAND_NAME", "framevalet"),
-    "brand_accent":     ("BRAND_ACCENT", "#2e9688"),
-    "brand_logo":       ("BRAND_LOGO", ""),        # filename under data/branding/
+    "brand_accent":     ("BRAND_ACCENT", "#b8892f"),
+    "brand_logo":       ("BRAND_LOGO", ""),            # filename under data/branding/
     "reconcile_minutes": ("RECONCILE_MINUTES", "15"),
+    "watch_enabled":    ("WATCH_ENABLED", "false"),
+    "watch_interval":   ("WATCH_INTERVAL", "120"),     # seconds between folder scans
+    "rclone_remote":    ("RCLONE_REMOTE", ""),         # e.g. onedrive:Frame TV Photos
+    "rclone_interval":  ("RCLONE_INTERVAL", "600"),    # seconds between rclone syncs
+    "unsplash_key":     ("UNSPLASH_KEY", ""),
+    "pexels_key":       ("PEXELS_KEY", ""),
+    "pixabay_key":      ("PIXABAY_KEY", ""),
+    "nasa_key":         ("NASA_KEY", "DEMO_KEY"),
+    "rijksmuseum_key":  ("RIJKSMUSEUM_KEY", ""),
 }
 
-APP_SECRET = os.environ.get("APP_SECRET", "")  # generated into DB on first boot if empty
+# Seed values for the first TV on an empty database (Docker-friendly).
+SEED_TV_HOST = os.environ.get("TV_HOST", "")
+SEED_TV_NAME = os.environ.get("TV_NAME", "Frame TV")
+SEED_TV_MAC = os.environ.get("TV_MAC", "")
+SEED_TV_CLIENT = os.environ.get("TV_CLIENT_NAME", "framevalet")
+SEED_TV_TOKEN = os.environ.get("TV_TOKEN", "")
+
+APP_SECRET = os.environ.get("APP_SECRET", "")
 BOOTSTRAP_ADMIN_USER = os.environ.get("ADMIN_USER", "")
 BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 PORT = int(os.environ.get("PORT", "8470"))
@@ -37,8 +51,13 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 
 
 def ensure_dirs():
-    for d in (DATA_DIR, ORIGINALS_DIR, PROCESSED_DIR, THUMBS_DIR, BRAND_DIR):
+    for d in (DATA_DIR, ORIGINALS_DIR, RENDERS_DIR, THUMBS_DIR, BRAND_DIR,
+              TOKENS_DIR, WATCH_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+
+def token_path(tv_id: int) -> Path:
+    return TOKENS_DIR / f"tv{tv_id}.txt"
 
 
 def env_pinned(key: str) -> bool:

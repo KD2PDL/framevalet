@@ -7,6 +7,9 @@ services:
       - "8470:8470"
     volumes:
       - ./data:/data
+      # For OneDrive/cloud sync: create the remote once with `rclone config`
+      # on the host, then mount it read-only:
+      # - ~/.config/rclone:/root/.config/rclone:ro
     # All configuration can be done in the web UI (admin panel).
     # Optionally pin settings here instead; env always wins over the UI:
     # environment:

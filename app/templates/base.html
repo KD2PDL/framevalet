@@ -5,8 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ brand.name }}</title>
 <link rel="icon" type="image/png" href="/static/icon.png">
+<script>(function () {
+  var t = null;
+  try { t = localStorage.getItem('fv-theme'); } catch (e) { /* private mode */ }
+  if (t !== 'dark' && t !== 'light') {
+    t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+})();</script>
 <link rel="stylesheet" href="/static/style.css">
 <style>:root { --accent: {{ brand.accent }}; }</style>
+<script>window.FV_TVS = [{% for t in tvs %}{"id": {{ t.id }}, "name": {{ t.name | tojson }}, "enabled": {{ 1 if t.enabled else 0 }}, "ok": {{ 1 if t.status.ok else 0 }}}{{ ", " if not loop.last }}{% endfor %}];</script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -19,18 +28,35 @@
         <span class="brand-name">{{ brand.name }}</span>
       {% endif %}
     </a>
-    <span id="tvPill" class="pill {{ 'pill-ok' if tv.tv_ok else 'pill-warn' }}" title="Frame TV status">
+    {% set etvs = tvs | selectattr('enabled') | list %}
+    {% set okc = etvs | selectattr('status.ok') | list | length %}
+    {% if not etvs %}
+    <a id="tvPill" class="pill pill-neutral" href="/tvs" title="No TV configured yet" data-enabled="">
       <span class="pill-dot"></span>
-      <span id="tvPillText">{{ 'TV connected' if tv.tv_ok else (tv.tv_error or 'TV not connected') }}</span>
+      <span id="tvPillText">No TV yet</span>
+    </a>
+    {% else %}
+    <span id="tvPill" class="pill {{ 'pill-ok' if okc == etvs | length else 'pill-warn' }}"
+          title="Frame TV status"
+          data-enabled="{{ etvs | map(attribute='id') | join(',') }}"
+          data-single="{{ etvs[0].name if etvs | length == 1 else '' }}">
+      <span class="pill-dot"></span>
+      <span id="tvPillText">{% if okc == etvs | length %}{{ etvs[0].name if etvs | length == 1 else 'TVs connected' }}{% else %}{{ okc }} of {{ etvs | length }} TVs reachable{% endif %}</span>
     </span>
+    {% endif %}
     {% if user %}
     <nav class="nav">
       <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Photos</a>
       {% if user.role == 'admin' %}
-      <a href="/doctor" class="{{ 'active' if request.url.path == '/doctor' else '' }}">TV Doctor</a>
+      <a href="/tvs" class="{{ 'active' if request.url.path.startswith('/tvs') else '' }}">TVs</a>
       <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">Admin</a>
       {% endif %}
     </nav>
+    {% endif %}
+    <button type="button" class="btn btn-ghost btn-sm theme-toggle" id="themeToggle" aria-label="Switch to dark theme">
+      <span class="tt-moon" aria-hidden="true">&#9790;</span><span class="tt-sun" aria-hidden="true">&#9728;</span>
+    </button>
+    {% if user %}
     <form method="post" action="/logout" class="logout-form">
       <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
     </form>

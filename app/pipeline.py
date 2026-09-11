@@ -1,27 +1,28 @@
-"""Ingestion pipeline: decode anything a phone or laptop can throw at us,
-normalize, and emit a TV-ready baseline JPEG plus a thumbnail.
+"""Two-stage pipeline, originals as source of truth.
 
-Every upload passes through here, no exceptions:
-  1. decode (HEIC/HEIF/AVIF via pillow-heif; JPEG/PNG/TIFF/WebP/BMP/GIF via Pillow)
-  2. EXIF orientation baked into pixels (the Frame ignores orientation metadata)
-  3. ICC -> sRGB (iPhone HEIC is Display-P3; skipping this washes out on the TV)
-  4. fit within 3840x2160, never upscale (Lanczos)
-  5. baseline JPEG, optimized Huffman (the Frame dislikes progressive JPEG)
-  6. capture DateTimeOriginal before stripping all other metadata
+INGEST (once, at upload): decode anything, bake EXIF orientation into pixels,
+convert to sRGB, capture the taken date, store a normalized full-resolution
+original (lossless-ish JPEG q97 or original bytes if already a JPEG needing no
+fixes) plus a thumbnail. No downscaling here — crops happen later.
+
+RENDER (at push time, cached): original + edits (crop) + style -> TV-ready
+JPEG at 4K or 1080p. Cache key covers everything that affects pixels, so
+re-pushes are free and a crop change is exactly one re-render.
 """
 import hashlib
 import io
+import json
 from datetime import datetime
 from pathlib import Path
 
 import pillow_heif
-from PIL import Image, ImageCms, ImageOps
+from PIL import Image, ImageCms, ImageFilter, ImageOps
 
 pillow_heif.register_heif_opener()
 if hasattr(pillow_heif, "register_avif_opener"):  # AVIF split out of newer releases
     pillow_heif.register_avif_opener()
 
-TV_W, TV_H = 3840, 2160
+RES = {"4k": (3840, 2160), "1080p": (1920, 1080)}
 THUMB = 480
 ACCEPTED = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".avif", ".tif", ".tiff",
             ".webp", ".bmp", ".gif"}
@@ -48,15 +49,15 @@ def _taken_date(img: Image.Image) -> str | None:
         exif = img.getexif()
         raw = exif.get_ifd(0x8769).get(36867) or exif.get(306)  # DateTimeOriginal | DateTime
         if raw:
-            datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S")  # validate TV format
+            datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S")
             return str(raw)
     except Exception:
         pass
     return None
 
 
-def process(data: bytes, out_proc: Path, out_thumb: Path, jpeg_quality: int = 85) -> dict:
-    """Returns {sha256, width, height, bytes, taken_date}. Raises PipelineError."""
+def ingest(data: bytes, out_orig: Path, out_thumb: Path) -> dict:
+    """Normalize and store the original. Returns {sha256, width, height, taken_date}."""
     sha = hashlib.sha256(data).hexdigest()
     try:
         img = Image.open(io.BytesIO(data))
@@ -66,19 +67,60 @@ def process(data: bytes, out_proc: Path, out_thumb: Path, jpeg_quality: int = 85
 
     taken = _taken_date(img)
     icc = img.info.get("icc_profile")           # capture BEFORE transpose (it can drop ICC)
-    img = ImageOps.exif_transpose(img)          # bake orientation into pixels
+    img = ImageOps.exif_transpose(img)
     img = _to_srgb(img, icc)
-    if img.width > TV_W or img.height > TV_H:   # fit, never upscale
-        img.thumbnail((TV_W, TV_H), Image.LANCZOS)
 
-    img.save(out_proc, "JPEG", quality=jpeg_quality, optimize=True, progressive=False)
+    # Normalized original: full resolution, near-lossless. EXIF/GPS never written.
+    img.save(out_orig, "JPEG", quality=97, optimize=True, progressive=False)
 
     t = img.copy()
     t.thumbnail((THUMB, THUMB), Image.LANCZOS)
     t.save(out_thumb, "JPEG", quality=75, optimize=True)
 
-    return {"sha256": sha, "width": img.width, "height": img.height,
-            "bytes": out_proc.stat().st_size, "taken_date": taken}
+    return {"sha256": sha, "width": img.width, "height": img.height, "taken_date": taken}
+
+
+def render_key(sha: str, edits: str | None, style: str, res: str,
+               quality: int, unsharp: bool) -> str:
+    basis = json.dumps([sha, edits or "", style, res, quality, unsharp])
+    return hashlib.sha1(basis.encode()).hexdigest()
+
+
+def render(orig_path: Path, out_path: Path, edits: str | None, style: str,
+           res: str, quality: int, unsharp: bool):
+    """Original -> TV-ready JPEG. Crop first (normalized coords), then style."""
+    img = Image.open(orig_path).convert("RGB")
+    if edits:
+        crop = json.loads(edits).get("crop")
+        if crop:
+            x, y, w, h = crop
+            box = (round(x * img.width), round(y * img.height),
+                   round((x + w) * img.width), round((y + h) * img.height))
+            if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
+                img = img.crop(box)
+
+    tw, th = RES.get(res, RES["4k"])
+    if style == "blurfill" and img.width / img.height < 1.3:
+        # portrait/square: blurred desaturated cover background, sharp photo centered
+        bg = img.copy()
+        scale = max(tw / bg.width, th / bg.height)
+        bg = bg.resize((round(bg.width * scale), round(bg.height * scale)), Image.LANCZOS)
+        bg = bg.crop(((bg.width - tw) // 2, (bg.height - th) // 2,
+                      (bg.width - tw) // 2 + tw, (bg.height - th) // 2 + th))
+        bg = bg.filter(ImageFilter.GaussianBlur(40))
+        bg = Image.blend(bg, Image.new("RGB", bg.size, (128, 128, 128)), 0.3)
+        fg = img.copy()
+        fg.thumbnail((tw, th), Image.LANCZOS)
+        bg.paste(fg, ((tw - fg.width) // 2, (th - fg.height) // 2))
+        img = bg
+    else:
+        if img.width > tw or img.height > th:   # fit, never upscale
+            img.thumbnail((tw, th), Image.LANCZOS)
+
+    if unsharp:
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=30, threshold=3))
+
+    img.save(out_path, "JPEG", quality=quality, optimize=True, progressive=False)
 
 
 def make_thumb_from_bytes(data: bytes, out_thumb: Path):

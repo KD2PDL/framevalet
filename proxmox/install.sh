@@ -42,7 +42,7 @@ echo "Installing framevalet..."
 pct exec "$CTID" -- bash -c "
 set -e
 apt-get update -qq
-apt-get install -y -qq git python3 python3-venv python3-pip >/dev/null
+apt-get install -y -qq git python3 python3-venv python3-pip rclone >/dev/null
 git clone -q $REPO /opt/framevalet
 python3 -m venv /opt/framevalet/.venv
 /opt/framevalet/.venv/bin/pip install -q /opt/framevalet
@@ -70,5 +70,7 @@ systemctl enable --now framevalet
 IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
 echo
 echo "framevalet is running: http://$IP:8470"
-echo "First visit creates the admin account; then run the TV Doctor to pair."
+echo "First visit creates the admin account; then add your TV and pair."
+echo "For OneDrive sync: pct exec '$CTID' -- rclone config   (one time), then set"
+echo "the rclone remote in Admin > Settings."
 echo "Update later with: pct exec $CTID -- bash -c 'cd /opt/framevalet && git pull && .venv/bin/pip install -q . && systemctl restart framevalet'"
