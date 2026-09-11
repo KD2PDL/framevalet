@@ -2,6 +2,23 @@
 (() => {
   'use strict';
   const $ = (sel) => document.querySelector(sel);
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* --------------------------------------------------------------- toasts */
+  const toastBox = $('#toasts');
+  const srLive = $('#srLive');
+  function toast(msg, kind = 'error') {
+    if (srLive) srLive.textContent = msg;
+    if (!toastBox) return;
+    const t = document.createElement('div');
+    t.className = `toast toast-${kind}`;
+    t.textContent = msg;
+    toastBox.appendChild(t);
+    setTimeout(() => {
+      t.classList.add('out');
+      setTimeout(() => t.remove(), 250);
+    }, 4000);
+  }
 
   async function post(url, body) {
     const res = await fetch(url, { method: 'POST', body });
@@ -16,6 +33,7 @@
   const fileInput = $('#fileInput');
   const uploadBtn = $('#uploadBtn');
   const uploadResults = $('#uploadResults');
+  const uploadProgress = $('#uploadProgress');
 
   async function sendFiles(files) {
     if (!files || !files.length) return;
@@ -23,6 +41,7 @@
     [...files].forEach((f) => fd.append('files', f));
     uploadBtn.disabled = true;
     uploadBtn.textContent = `Uploading ${files.length} photo${files.length > 1 ? 's' : ''}…`;
+    if (uploadProgress) uploadProgress.hidden = false;
     try {
       const data = await post('/upload', fd);
       uploadResults.hidden = false;
@@ -37,8 +56,9 @@
       });
       if (anyOk) setTimeout(() => location.reload(), 1500);
     } catch (e) {
-      alert(`Upload failed: ${e.message}`);
+      toast(`Upload failed: ${e.message}`);
     } finally {
+      if (uploadProgress) uploadProgress.hidden = true;
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Add photos';
     }
@@ -54,9 +74,17 @@
     dropZone.addEventListener('drop', (e) => sendFiles(e.dataTransfer.files));
   }
 
+  /* --------------------------------------------------- entrance stagger */
+  const grid = $('#photoGrid');
+  if (grid && !reduceMotion) {
+    [...grid.querySelectorAll('.card')].slice(0, 24)
+      .forEach((card, i) => card.style.setProperty('--d', `${i * 25}ms`));
+    grid.classList.add('enter');
+    setTimeout(() => grid.classList.remove('enter'), 1100);
+  }
+
   /* ------------------------------------------------------------- filters */
   const chips = $('#filterChips');
-  const grid = $('#photoGrid');
   if (chips && grid) {
     chips.addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
@@ -69,7 +97,25 @@
         if (f === 'external') show = source === 'external';
         else if (f === 'queued') show = status === 'queued' || status === 'processing';
         else if (f !== 'all') show = status === f;
-        card.hidden = !show;
+        if (show) {
+          card.classList.remove('f-out');
+          if (card.hidden) {
+            card.hidden = false;
+            if (!reduceMotion) {
+              card.classList.add('f-in');
+              card.addEventListener('animationend', () => card.classList.remove('f-in'), { once: true });
+            }
+          }
+        } else if (!card.hidden && !card.classList.contains('f-out')) {
+          if (reduceMotion) { card.hidden = true; return; }
+          card.classList.add('f-out');
+          setTimeout(() => {
+            if (card.classList.contains('f-out')) {
+              card.hidden = true;
+              card.classList.remove('f-out');
+            }
+          }, 150);
+        }
       });
     });
   }
@@ -98,11 +144,21 @@
       overlay.hidden = false;
       document.body.style.overflow = 'hidden';
     }
+    let closing = false;
     function close() {
-      overlay.hidden = true;
-      img.src = '';
-      current = null;
-      document.body.style.overflow = '';
+      if (overlay.hidden || closing) return;
+      const finish = () => {
+        overlay.classList.remove('closing');
+        overlay.hidden = true;
+        img.src = '';
+        current = null;
+        closing = false;
+        document.body.style.overflow = '';
+      };
+      if (reduceMotion) { finish(); return; }
+      closing = true;
+      overlay.classList.add('closing');
+      setTimeout(finish, 160);
     }
 
     grid.addEventListener('click', (e) => {
@@ -124,7 +180,7 @@
         btnDisplay.textContent = 'Now showing ✓';
         setTimeout(() => { btnDisplay.textContent = 'Show on TV now'; }, 2000);
       } catch (e) {
-        alert(e.message);
+        toast(e.message);
       } finally { btnDisplay.disabled = false; }
     });
 
@@ -134,10 +190,16 @@
       btnDelete.disabled = true;
       try {
         await post(`/photo/${current.dataset.id}/delete`);
-        current.remove();
+        const card = current;
+        if (reduceMotion) {
+          card.remove();
+        } else {
+          card.classList.add('removing');
+          setTimeout(() => card.remove(), 200);
+        }
         close();
       } catch (e) {
-        alert(e.message);
+        toast(e.message);
       } finally { btnDelete.disabled = false; }
     });
   }
@@ -155,9 +217,14 @@
         if (!res.ok) return;
         const s = await res.json();
         if (pill && pillText && s.tv) {
+          const wasOk = pill.classList.contains('pill-ok');
           pill.classList.toggle('pill-ok', !!s.tv.tv_ok);
           pill.classList.toggle('pill-warn', !s.tv.tv_ok);
           pillText.textContent = s.tv.tv_ok ? 'TV connected' : (s.tv.tv_error || 'TV not connected');
+          if (!wasOk && s.tv.tv_ok && !reduceMotion) {
+            pill.classList.add('pill-glow');
+            pill.addEventListener('animationend', () => pill.classList.remove('pill-glow'), { once: true });
+          }
         }
         if (s.counts) {
           const c = s.counts;
