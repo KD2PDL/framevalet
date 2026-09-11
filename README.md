@@ -3,7 +3,7 @@
 Self-hosted, multi-user photo manager for Samsung Frame TVs. The family uploads
 photos from any phone or laptop; framevalet optimizes them (HEIC included),
 pushes them to Art Mode with a matte and the right date, and keeps everything
-in sync — even when the TV is off.
+in sync, even when the TV is off.
 
 ## Why
 
