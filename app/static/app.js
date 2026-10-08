@@ -1639,11 +1639,14 @@
     const autoCb = $('#logsAuto');
     let autoTimer = null;
     const LVL = { WARNING: 'log-warn', ERROR: 'log-err', CRITICAL: 'log-err' };
+    const RANK = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 3 };
+    const minSel = $('#logsMin');
     async function loadLogs() {
       try {
         const data = await getJSON('/admin/logs');
         logBox.innerHTML = '';
-        const logs = data.logs || [];
+        const min = RANK[minSel ? minSel.value : 'INFO'] || 0;
+        const logs = (data.logs || []).filter((l) => (RANK[l.level] ?? 1) >= min);
         logs.forEach((l) => {
           const row = el('div', `log-line ${LVL[l.level] || ''}`.trim());
           const ts = el('span', 'log-ts', agoText(l.ts));
@@ -1659,6 +1662,7 @@
     }
     loadLogs();
     if (refreshBtn) refreshBtn.addEventListener('click', loadLogs);
+    if (minSel) minSel.addEventListener('change', loadLogs);
     if (autoCb) {
       autoCb.addEventListener('change', () => {
         if (autoCb.checked) autoTimer = setInterval(loadLogs, 5000);

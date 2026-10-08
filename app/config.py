@@ -19,6 +19,7 @@ DB_PATH = DATA_DIR / "framevalet.db"
 
 # key -> (env var, default). App-wide only.
 SETTINGS = {
+    "log_level":        ("LOG_LEVEL", "INFO"),         # DEBUG | INFO | WARNING | ERROR
     "default_style":    ("DEFAULT_STYLE", "fit"),      # fit | blurfill
     "jpeg_quality":     ("JPEG_QUALITY", "90"),
     "unsharp":          ("UNSHARP", "false"),          # subtle sharpen on renders
@@ -106,6 +107,8 @@ def set(db, key: str, value: str):
     if key == "backup_interval":
         if not value.isdigit():
             raise ValueError("backup interval must be a whole number of hours (0 = off)")
+    if key == "log_level" and value.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+        raise ValueError("log level must be DEBUG, INFO, WARNING or ERROR")
     if key == "cf_access_default_role" and value not in ("member", "admin"):
         raise ValueError("default role must be member or admin")
     if key == "cf_access_team" and not _re.match(r"^(https?://)?[a-z0-9.-]*/?$", value, _re.I):

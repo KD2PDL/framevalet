@@ -130,6 +130,7 @@ with rclone preinstalled.
 | `ADMIN_USER`, `ADMIN_PASSWORD` | Headless first-boot admin creation |
 | `APP_SECRET` | Session secret (auto-generated if unset) |
 | `BRAND_NAME`, `BRAND_ACCENT`, `BRAND_LOGO` | White-label pinning |
+| `LOG_LEVEL` | `DEBUG`, `INFO` (default), `WARNING`, `ERROR`; changeable live in Admin › Logs |
 | `DEFAULT_STYLE` | `fit` (default, never crops) or `blurfill` |
 | `JPEG_QUALITY`, `UNSHARP`, `RECONCILE_MINUTES` | Render/sync tuning |
 | `WATCH_ENABLED`, `WATCH_INTERVAL`, `RCLONE_REMOTE`, `RCLONE_INTERVAL` | Folder watcher + cloud sync |
@@ -137,6 +138,12 @@ with rclone preinstalled.
 | `BACKUP_INTERVAL`, `BACKUP_REMOTE`, `BACKUP_PASSPHRASE`, `BACKUP_PING_URL` | Scheduled backups (hours, rclone remote, encryption, health ping) |
 | `CF_TUNNEL_TOKEN`, `CF_TUNNEL_AUTOSTART` | Cloudflare Tunnel (see Remote access) |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `CF_ACCESS_AUTO_PROVISION`, `CF_ACCESS_DEFAULT_ROLE` | Cloudflare Access sign-in |
+
+## Logs (Admin › Logs)
+
+Pick the log level live (DEBUG adds every HTTP request). The last 500 events
+show in the page with a level filter; the full history is in rotating files
+under `data/logs/` (5 × 5 MB), each downloadable, or all at once as a zip.
 
 ## Update, backup, restore (Admin › Maintenance)
 

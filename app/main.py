@@ -10,6 +10,7 @@ from . import auth, cloudflare, config, db as dbm, logbuf, maint, routes, source
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
+config.ensure_dirs()
 logbuf.install()
 
 
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
     maint.apply_pending_restore()
     dbm.init()
     db = dbm.connect()
+    logbuf.set_level(config.get(db, "log_level"))
     # headless bootstrap: ADMIN_USER/ADMIN_PASSWORD env creates the first admin
     if config.BOOTSTRAP_ADMIN_USER and config.BOOTSTRAP_ADMIN_PASSWORD:
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():

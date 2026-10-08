@@ -318,3 +318,27 @@ st = maint.update_status(refresh=True)
 assert st["previous"] == "0000000" if st["checkout"] else True, st
 maint.PREVIOUS_FILE.unlink()
 print("maint extras: ok")
+
+
+# --- logs: rotating file on disk, runtime level, zip bundle
+import logging as _lg
+from app import logbuf
+logbuf.install()
+logbuf.set_level("INFO")
+_lg.getLogger("framevalet.test").debug("hidden-debug-line")
+_lg.getLogger("framevalet.test").warning("visible-warning-line")
+logbuf.set_level("DEBUG")
+_lg.getLogger("framevalet.test").debug("now-visible-debug-line")
+logbuf._file_handler.flush()
+txt = logbuf.LOG_FILE.read_text()
+assert "visible-warning-line" in txt and "now-visible-debug-line" in txt and "hidden-debug-line" not in txt
+assert logbuf.current_level() == "DEBUG"
+try:
+    logbuf.set_level("LOUD"); raise AssertionError("bad level accepted")
+except ValueError:
+    pass
+assert logbuf.files()[0]["name"] == "framevalet.log"
+import zipfile as _zf
+assert "framevalet.log" in _zf.ZipFile(_io.BytesIO(logbuf.zip_all())).namelist()
+logbuf.set_level("INFO")
+print("logs: ok")

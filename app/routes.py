@@ -731,13 +731,38 @@ def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.requi
                        access_enabled=cloudflare.access_enabled(db),
                        update=maint.update_status(),
                        backup=dict(maint.status),
-                       backups=maint.list_backups())
+                       backups=maint.list_backups(),
+                       log_files=__import__("app.logbuf", fromlist=["files"]).files())
 
 
 @router.get("/admin/logs")
 def admin_logs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
     from . import logbuf
-    return JSONResponse({"logs": logbuf.recent()})
+    return JSONResponse({"logs": logbuf.recent(), "level": logbuf.current_level()})
+
+
+@router.get("/admin/logs/files")
+def admin_log_files(user=Depends(auth.require_admin)):
+    from . import logbuf
+    return JSONResponse({"files": logbuf.files()})
+
+
+@router.get("/admin/logs/download/all")
+def admin_logs_zip(user=Depends(auth.require_admin)):
+    from . import logbuf
+    from fastapi.responses import Response
+    stamp = __import__("time").strftime("%Y%m%d-%H%M%S")
+    return Response(logbuf.zip_all(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="framevalet-logs-{stamp}.zip"'})
+
+
+@router.get("/admin/logs/download/{name}")
+def admin_log_download(name: str, user=Depends(auth.require_admin)):
+    from . import logbuf
+    path = logbuf.LOG_DIR / Path(name).name
+    if not (name.startswith("framevalet.log") and path.is_file()):
+        raise HTTPException(404)
+    return FileResponse(path, media_type="text/plain", filename=path.name)
 
 
 @router.post("/admin/settings")
@@ -757,6 +782,10 @@ def save_settings(request: Request, db=Depends(dbm.get_db),
         cloudflare.tunnel.stop() if not value else cloudflare.tunnel.restart(value)
     if key == "cf_access_team":
         cloudflare._jwks.clear()
+    if key == "log_level":
+        from . import logbuf
+        logbuf.set_level(value)
+        return RedirectResponse("/admin#logs", 303)
     return RedirectResponse("/admin", 303)
 
 

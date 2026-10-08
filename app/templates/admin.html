@@ -276,12 +276,39 @@
 <section id="logs" class="admin-section">
   <h2>Logs</h2>
   <div class="panel">
+    <div class="settings-grid">
+      {{ setting_row('log_level', 'Log level', 'choice', ['DEBUG', 'INFO', 'WARNING', 'ERROR']) }}
+    </div>
+    <p class="hint">Applies immediately. DEBUG also records every HTTP request; switch back to INFO when done, it fills the files fast.</p>
+  </div>
+  <div class="panel">
+    <h3>Live view</h3>
     <div class="log-controls">
       <button type="button" class="btn btn-sm" id="logsRefresh">Refresh</button>
       <label class="check-label"><input type="checkbox" id="logsAuto"> Auto-refresh (5s)</label>
+      <label>Show
+        <select id="logsMin">
+          <option value="DEBUG">everything</option>
+          <option value="INFO" selected>info and up</option>
+          <option value="WARNING">warnings and errors</option>
+          <option value="ERROR">errors only</option>
+        </select>
+      </label>
     </div>
     <div class="log-box" id="logBox"><p class="muted">Loading&hellip;</p></div>
-    <p class="hint">Recent app events only. Full history: <code>journalctl -u framevalet</code> or <code>docker logs</code>.</p>
+    <p class="hint">Last 500 events in memory. The files below hold the full history.</p>
+  </div>
+  <div class="panel">
+    <h3>Log files</h3>
+    {% if log_files %}
+    <ul class="backup-list">
+      {% for f in log_files %}<li><a href="/admin/logs/download/{{ f.name }}">{{ f.name }}</a> <span class="muted">{{ (f.size / 1024) | round(0) | int }} KB, <span data-ago="{{ f.mtime }}">&hellip;</span></span></li>{% endfor %}
+    </ul>
+    <a class="btn btn-sm" href="/admin/logs/download/all">Download all (zip)</a>
+    {% else %}
+    <p class="muted">No log files yet.</p>
+    {% endif %}
+    <p class="hint">Rotates at 5 MB, keeps 5 files (about 30 MB of history). Also in the host journal: <code>journalctl -u framevalet</code> or <code>docker logs</code>.</p>
   </div>
 </section>
 {% endblock %}
