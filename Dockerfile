@@ -1,7 +1,10 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends rclone \
+RUN apt-get update && apt-get install -y --no-install-recommends rclone curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# cloudflared for the optional Cloudflare Tunnel (Admin > Remote access)
+RUN curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture)" \
+      -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
 
 WORKDIR /srv/framevalet
 COPY pyproject.toml README.md ./

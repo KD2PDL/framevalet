@@ -9,7 +9,7 @@ from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from . import config, db as dbm
+from . import cloudflare, config, db as dbm
 
 ph = PasswordHasher()
 _DUMMY_HASH = ph.hash("timing-equalization-placeholder")
@@ -19,12 +19,42 @@ SESSION_DAYS = 90
 COOKIE = "fv_session"
 
 
-def create_user(db, username, password, role="member", can_upload=True, can_delete_any=False):
+def create_user(db, username, password, role="member", can_upload=True, can_delete_any=False,
+                email=None, sso=False):
     db.execute(
-        "INSERT INTO users(username, pw_hash, role, can_upload, can_delete_any, created) "
-        "VALUES(?,?,?,?,?,?)",
-        (username.strip(), ph.hash(password), role, int(can_upload), int(can_delete_any), dbm.now()))
+        "INSERT INTO users(username, pw_hash, role, can_upload, can_delete_any, email, sso, created) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (username.strip(), ph.hash(password), role, int(can_upload), int(can_delete_any),
+         email, int(sso), dbm.now()))
     db.commit()
+
+
+def sso_user(db, claims: dict):
+    """Map verified Access claims to a user row, provisioning on first sight.
+    Browser logins carry `email`; service tokens carry `common_name` (the
+    token's Client ID) and must match an existing local username."""
+    email = (claims.get("email") or "").strip().lower()
+    if not email:
+        cn = (claims.get("common_name") or "").strip()
+        return db.execute("SELECT * FROM users WHERE username=?", (cn,)).fetchone() if cn else None
+    row = db.execute("SELECT * FROM users WHERE email=? COLLATE NOCASE", (email,)).fetchone()
+    if row or config.get(db, "cf_access_autoprovision") != "true":
+        return row
+    username = email.split("@", 1)[0]
+    if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+        username = email                      # local part taken by someone else: no merge
+    role = "admin" if config.get(db, "cf_access_default_role") == "admin" else "member"
+    create_user(db, username, secrets.token_urlsafe(32), role=role, email=email, sso=True)
+    cloudflare.log.info("provisioned %s user %s for %s", role, username, email)
+    return db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+
+
+def sso_claims(request, db) -> dict | None:
+    """Verified Access claims for this request, or None."""
+    token = request.headers.get("cf-access-jwt-assertion")
+    if token and cloudflare.access_enabled(db):
+        return cloudflare.verify(db, token)
+    return None
 
 
 def rate_limited(ip: str) -> bool:
@@ -72,20 +102,35 @@ def end_session(db, token):
     db.commit()
 
 
-def set_cookie(resp, token):
+def set_cookie(resp, token, request=None):
+    # Behind the tunnel uvicorn already rewrote scheme/client from the
+    # X-Forwarded-* headers cloudflared sends from loopback, so "https" here is
+    # trustworthy and the cookie gets the Secure flag without extra config.
+    secure = config.COOKIE_SECURE or (request is not None and request.url.scheme == "https")
     resp.set_cookie(COOKIE, token, max_age=SESSION_DAYS * 86400,
-                    httponly=True, secure=config.COOKIE_SECURE, samesite="lax", path="/")
+                    httponly=True, secure=secure, samesite="lax", path="/")
 
 
-def user_from_request(request: Request, db: sqlite3.Connection):
+def user_from_request(request, db: sqlite3.Connection):
+    """Session cookie first (local login). Otherwise a verified Cloudflare
+    Access JWT, checked on every request: no app session is minted for SSO, so
+    removing someone in Cloudflare locks them out immediately and Log out
+    can't be undone by the next request's header. Works for WebSockets too."""
     token = request.cookies.get(COOKIE)
-    if not token:
-        return None
-    row = db.execute(
-        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id "
-        "WHERE s.token=? AND s.expires > ? AND u.disabled=0",
-        (token, dbm.now())).fetchone()
-    return row
+    if token:
+        row = db.execute(
+            "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id "
+            "WHERE s.token=? AND s.expires > ? AND u.disabled=0",
+            (token, dbm.now())).fetchone()
+        if row:
+            return row
+    claims = sso_claims(request, db)
+    if claims:
+        row = sso_user(db, claims)
+        if row and not row["disabled"]:
+            request.state.sso = True
+            return row
+    return None
 
 
 def current_user(request: Request, db=Depends(dbm.get_db)):

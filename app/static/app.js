@@ -138,17 +138,29 @@
 
   async function sendFiles(files) {
     if (!files || !files.length) return;
-    const fd = new FormData();
-    [...files].forEach((f) => fd.append('files', f));
     uploadBtn.disabled = true;
-    uploadBtn.textContent = `Uploading ${files.length} photo${files.length > 1 ? 's' : ''}…`;
     if (uploadProgress) uploadProgress.hidden = false;
     try {
-      const data = await post('/upload', fd);
+      // One file per request: keeps each body under Cloudflare's 100 MB cap
+      // when the app is reached through a tunnel, and gives per-file progress.
+      const results = [];
+      let i = 0;
+      for (const f of files) {
+        i += 1;
+        uploadBtn.textContent = `Uploading ${i} of ${files.length}…`;
+        const fd = new FormData();
+        fd.append('files', f);
+        try {
+          const data = await post('/upload', fd);
+          results.push(...(data.results || []));
+        } catch (e) {
+          results.push({ file: f.name, ok: false, error: e.message });
+        }
+      }
       uploadResults.hidden = false;
       uploadResults.innerHTML = '';
       let anyOk = false;
-      (data.results || []).forEach((r) => {
+      results.forEach((r) => {
         const li = document.createElement('li');
         li.className = r.ok ? 'ok' : 'err';
         li.textContent = r.ok ? `✓ ${r.file}` : `✕ ${r.file}: ${r.error}`;
@@ -1550,6 +1562,21 @@
       });
     }
   });
+
+  /* -------------------------------------------------- admin tunnel status */
+  const tunnelStatus = $('#tunnelStatus');
+  if (tunnelStatus) {
+    setInterval(async () => {
+      try {
+        const t = await getJSON('/admin/tunnel/status');
+        let text = !t.available ? 'cloudflared: not installed'
+          : t.running ? `Tunnel: running, ${t.connections} connection${t.connections === 1 ? '' : 's'}`
+          : 'Tunnel: stopped';
+        tunnelStatus.textContent = text + ' ';
+        if (t.error) tunnelStatus.appendChild(el('span', 'status-err', t.error));
+      } catch (_) { /* leave the server-rendered text */ }
+    }, 5000);
+  }
 
   /* ---------------------------------------------------------- admin logs */
   const logBox = $('#logBox');

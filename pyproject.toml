@@ -13,6 +13,7 @@ dependencies = [
     "pillow>=10.4",
     "pillow-heif>=0.18",
     "argon2-cffi>=23.1",
+    "PyJWT[crypto]>=2.8",        # Cloudflare Access JWT verification
     # Pinned exactly: two DIFFERENT codebases publish under this name/version
     # (PyPI xchwarze vs the NickWaterton fork). This pin is the one verified
     # against a real 2025 Frame (QN55LS03H). Evaluate the fork deliberately.

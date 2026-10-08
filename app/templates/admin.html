@@ -1,10 +1,46 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro setting_row(key, label, kind, extra) %}
+{% set s = settings[key] %}
+<form method="post" action="/admin/settings" class="setting-row">
+  <input type="hidden" name="key" value="{{ key }}">
+  <label>{{ label }}
+    {% if s.env_pinned %}<span class="tag tag-pin">set by {{ s.env_var }}</span>{% endif %}
+    {% if kind == 'bool' %}
+    <select name="value" {% if s.env_pinned %}disabled{% endif %}>
+      <option value="true" {% if s.value == 'true' %}selected{% endif %}>true</option>
+      <option value="false" {% if s.value != 'true' %}selected{% endif %}>false</option>
+    </select>
+    {% elif kind == 'choice' %}
+    <select name="value" {% if s.env_pinned %}disabled{% endif %}>
+      {% for opt in extra %}
+      <option value="{{ opt }}" {% if s.value == opt %}selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+    {% elif kind == 'color' %}
+    <input type="color" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
+    {% elif kind == 'number' %}
+    <input type="number" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
+    {% elif s.secret %}
+    <input type="password" name="value" value="" autocomplete="off"
+           placeholder="{{ '•••••••• (set)' if s.value else (extra or '') }}" {% if s.env_pinned %}disabled{% endif %}>
+    {% else %}
+    <input type="text" name="value" value="{{ s.value or '' }}" {% if extra %}placeholder="{{ extra }}"{% endif %} {% if s.env_pinned %}disabled{% endif %}>
+    {% endif %}
+  </label>
+  {% if not s.env_pinned %}
+  <button class="btn btn-sm">Save</button>
+  {% if s.secret and s.value %}<button class="btn btn-sm btn-ghost" name="clear" value="1">Clear</button>{% endif %}
+  {% endif %}
+</form>
+{% endmacro %}
+
 <div class="page-head">
   <h1>Admin</h1>
   <nav class="anchor-nav">
     <a href="#users">Users</a>
     <a href="#settings">Settings</a>
+    <a href="#remote">Remote access</a>
     <a href="#automation">Automation</a>
     <a href="#logs">Logs</a>
   </nav>
@@ -20,10 +56,11 @@
       <tbody>
         {% for u in users %}
         <tr>
-          <td><strong>{{ u.username }}</strong></td>
+          <td><strong>{{ u.username }}</strong>{% if u.email %}<br><span class="muted">{{ u.email }}</span>{% endif %}</td>
           <td>{{ u.role }}</td>
           <td class="flag-cell">
             {% if u.disabled %}<span class="tag tag-red">disabled</span>{% endif %}
+            {% if u.sso %}<span class="tag">sso</span>{% endif %}
             {% if u.can_upload %}<span class="tag">upload</span>{% endif %}
             {% if u.can_delete_any %}<span class="tag">delete any</span>{% endif %}
           </td>
@@ -42,7 +79,7 @@
             </form>
             <form method="post" action="/admin/users/{{ u.id }}" class="inline-pw">
               <input type="hidden" name="action" value="set_password">
-              <input type="password" name="password" placeholder="New password" minlength="8" required>
+              <input type="password" name="password" placeholder="{{ 'Enable local login' if u.sso else 'New password' }}" minlength="8" required>
               <button class="btn btn-sm">Set</button>
             </form>
             <form method="post" action="/admin/users/{{ u.id }}" data-confirm="Delete user {{ u.username }}? This cannot be undone.">
@@ -78,7 +115,7 @@
   <h2>Settings</h2>
 
   <div class="settings-grid">
-    {% set fields = [
+    {% for key, label, kind, extra in [
       ('default_style', 'Default style', 'choice', ['fit', 'blurfill']),
       ('jpeg_quality', 'JPEG quality', 'number', none),
       ('unsharp', 'Unsharp on renders', 'bool', none),
@@ -92,35 +129,7 @@
       ('unsplash_key', 'Unsplash API key', 'text', none),
       ('pexels_key', 'Pexels API key', 'text', none),
       ('pixabay_key', 'Pixabay API key', 'text', none),
-    ] %}
-    {% for key, label, kind, extra in fields %}
-    {% set s = settings[key] %}
-    <form method="post" action="/admin/settings" class="setting-row">
-      <input type="hidden" name="key" value="{{ key }}">
-      <label>{{ label }}
-        {% if s.env_pinned %}<span class="tag tag-pin">set by {{ s.env_var }}</span>{% endif %}
-        {% if kind == 'bool' %}
-        <select name="value" {% if s.env_pinned %}disabled{% endif %}>
-          <option value="true" {% if s.value == 'true' %}selected{% endif %}>true</option>
-          <option value="false" {% if s.value != 'true' %}selected{% endif %}>false</option>
-        </select>
-        {% elif kind == 'choice' %}
-        <select name="value" {% if s.env_pinned %}disabled{% endif %}>
-          {% for opt in extra %}
-          <option value="{{ opt }}" {% if s.value == opt %}selected{% endif %}>{{ opt }}</option>
-          {% endfor %}
-        </select>
-        {% elif kind == 'color' %}
-        <input type="color" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
-        {% elif kind == 'number' %}
-        <input type="number" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
-        {% else %}
-        <input type="text" name="value" value="{{ s.value or '' }}" {% if extra %}placeholder="{{ extra }}"{% endif %} {% if s.env_pinned %}disabled{% endif %}>
-        {% endif %}
-      </label>
-      {% if not s.env_pinned %}<button class="btn btn-sm">Save</button>{% endif %}
-    </form>
-    {% endfor %}
+    ] %}{{ setting_row(key, label, kind, extra) }}{% endfor %}
   </div>
 
   <div class="panel">
@@ -129,6 +138,54 @@
       <input type="file" name="file" accept=".png,.svg,.jpg,.jpeg,.webp" required>
       <button class="btn btn-sm">Upload logo</button>
     </form>
+  </div>
+</section>
+
+<section id="remote" class="admin-section">
+  <h2>Remote access</h2>
+  <div class="panel">
+    <h3>Cloudflare Tunnel</h3>
+    <p class="status-item" id="tunnelStatus">
+      {% if not tunnel.available %}
+      cloudflared: not installed
+      {% elif tunnel.running %}
+      Tunnel: running, {{ tunnel.connections }} connection{{ '' if tunnel.connections == 1 else 's' }}
+      {% else %}
+      Tunnel: stopped
+      {% endif %}
+      {% if tunnel.error %}<span class="status-err">{{ tunnel.error }}</span>{% endif %}
+    </p>
+    <form method="post" action="/admin/tunnel" class="row-form">
+      {% if tunnel.wanted %}
+      <input type="hidden" name="action" value="stop"><button class="btn btn-sm">Stop tunnel</button>
+      {% else %}
+      <input type="hidden" name="action" value="start">
+      <button class="btn btn-sm btn-primary" {% if not tunnel.available or not settings.cf_tunnel_token.value %}disabled{% endif %}>Start tunnel</button>
+      {% endif %}
+    </form>
+    <div class="settings-grid">
+      {{ setting_row('cf_tunnel_token', 'Tunnel token', 'text', 'paste from Zero Trust > Networks > Tunnels') }}
+      {{ setting_row('cf_tunnel_autostart', 'Start tunnel with the app', 'bool', none) }}
+    </div>
+    <p class="hint">
+      One-time, in the Cloudflare Zero Trust dashboard: <strong>1.</strong> Networks &rsaquo; Tunnels &rsaquo; Create (cloudflared), copy the token here.
+      <strong>2.</strong> On the tunnel, add a Public Hostname pointing to <code>http://localhost:{{ request.url.port or 8470 }}</code>.
+      <strong>3.</strong> Access &rsaquo; Applications &rsaquo; Add self-hosted on that hostname with your identity provider (e.g. Microsoft Entra ID) and an Allow policy. Copy its Audience tag below.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h3>Cloudflare Access sign-in {% if access_enabled %}<span class="tag">active</span>{% endif %}</h3>
+    <div class="settings-grid">
+      {{ setting_row('cf_access_team', 'Team domain', 'text', 'acme.cloudflareaccess.com') }}
+      {{ setting_row('cf_access_aud', 'Application audience tag', 'text', 'from the Access application overview') }}
+      {{ setting_row('cf_access_autoprovision', 'Create accounts on first sign-in', 'bool', none) }}
+      {{ setting_row('cf_access_default_role', 'Role for new accounts', 'choice', ['member', 'admin']) }}
+    </div>
+    <p class="hint">
+      Visitors who pass Access skip the password form; the app verifies Cloudflare's signed token on every request, so removing someone in Cloudflare locks them out at once.
+      Local username/password login keeps working on the LAN. Non-browser clients use an Access service token whose Client ID matches a local username.
+    </p>
   </div>
 </section>
 

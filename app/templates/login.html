@@ -5,6 +5,7 @@
     <h1>Sign in</h1>
     <p class="muted">to the {{ brand.name }} photo library</p>
     {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+    {% if sso_email %}<div class="form-error">You're signed in to Cloudflare as <strong>{{ sso_email }}</strong>, but there is no {{ brand.name }} account for it yet. Ask an admin to create one, or sign in with a local account below.</div>{% endif %}
     <form method="post" action="/login" class="stack">
       <label>Username
         <input type="text" name="username" required autocomplete="username" autofocus>

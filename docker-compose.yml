@@ -10,6 +10,9 @@ services:
       # For OneDrive/cloud sync: create the remote once with `rclone config`
       # on the host, then mount it read-only:
       # - ~/.config/rclone:/root/.config/rclone:ro
+    # Remote access: paste a Cloudflare Tunnel token in Admin > Remote access.
+    # cloudflared is bundled in the image and runs inside this container, so the
+    # app sees it on loopback and trusts its X-Forwarded-* headers automatically.
     # All configuration can be done in the web UI (admin panel).
     # Optionally pin settings here instead; env always wins over the UI:
     # environment:
@@ -19,3 +22,6 @@ services:
     #   ADMIN_USER: admin          # headless first-boot bootstrap
     #   ADMIN_PASSWORD: change-me
     #   BRAND_NAME: My Family Frame
+    #   CF_TUNNEL_TOKEN: "..."                 # pin the tunnel instead of the UI
+    #   CF_ACCESS_TEAM_DOMAIN: acme.cloudflareaccess.com
+    #   CF_ACCESS_AUD: "..."                   # Access application audience tag

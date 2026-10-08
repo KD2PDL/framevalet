@@ -134,12 +134,52 @@ with rclone preinstalled.
 | `JPEG_QUALITY`, `UNSHARP`, `RECONCILE_MINUTES` | Render/sync tuning |
 | `WATCH_ENABLED`, `WATCH_INTERVAL`, `RCLONE_REMOTE`, `RCLONE_INTERVAL` | Folder watcher + cloud sync |
 | `UNSPLASH_KEY`, `PEXELS_KEY`, `PIXABAY_KEY`, `NASA_KEY`, `RIJKSMUSEUM_KEY` | External source keys |
+| `CF_TUNNEL_TOKEN`, `CF_TUNNEL_AUTOSTART` | Cloudflare Tunnel (see Remote access) |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `CF_ACCESS_AUTO_PROVISION`, `CF_ACCESS_DEFAULT_ROLE` | Cloudflare Access sign-in |
+
+## Remote access (Cloudflare Tunnel + Access)
+
+framevalet can publish itself through a Cloudflare Tunnel and let Cloudflare
+Access handle sign-in with your identity provider (Microsoft 365, Google,
+GitHub, one-time PIN...). No inbound ports, no VPN client. Local
+username/password login keeps working on the LAN.
+
+Once, in the Zero Trust dashboard:
+
+1. **Networks › Tunnels › Create** (cloudflared). Copy the token into
+   **Admin › Remote access › Tunnel token** and click **Start tunnel**.
+2. On the tunnel, add a **Public Hostname** (e.g. `frames.example.com`) that
+   points to `http://localhost:8470`.
+3. **Access › Applications › Add** a self-hosted application on that hostname
+   with your identity provider and an Allow policy (scope it to a group: anyone
+   the policy admits gets an account). Copy the application's **Audience tag**
+   and your **team domain** into Admin › Remote access.
+
+How the app treats a request that arrives through the tunnel:
+
+- It verifies the `Cf-Access-Jwt-Assertion` header against your team's public
+  keys, audience and issuer on **every request**. The plain
+  `Cf-Access-Authenticated-User-Email` header is never trusted, so a forged
+  header from the LAN gets the login page.
+- A verified email is matched to a user; unknown emails are auto-provisioned as
+  members (configurable) with no password. Disable or delete them in Admin like
+  any other user. "Set password" turns an SSO account into a local one too.
+- No app session is minted for SSO users, so removing someone in Cloudflare
+  locks them out immediately, and **Log out** also ends the Access session.
+- Non-browser clients use an Access **service token**; name a local user after
+  the token's Client ID and it maps to that account.
+- Uploads go one file per request to stay under Cloudflare's 100 MB body limit.
+
+cloudflared ships in the Docker image and the Proxmox installer. On a bare
+install, put the `cloudflared` binary on `PATH`. The tunnel token lives in the
+app database; keep the data directory private (the installer makes it `0700`).
 
 ## Security notes
 
 framevalet is designed for a home LAN. Auth is required for every page and
 every image byte, passwords are argon2-hashed, and sessions are server-side.
-For remote access, put it behind Tailscale or a VPN; don't port-forward it.
+For remote access use the built-in Cloudflare Tunnel + Access (above), or a
+VPN such as Tailscale; don't port-forward it.
 
 ## License
 

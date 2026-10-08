@@ -53,17 +53,11 @@ async def _send_all(msg: str):
 
 @router.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
-    # Auth: same session cookie as the pages.
+    # Auth: same rules as the pages (session cookie, or a verified Access JWT).
     from . import auth, db as dbm
-    token = websocket.cookies.get(auth.COOKIE)
     db = dbm.connect()
     try:
-        row = None
-        if token:
-            row = db.execute(
-                "SELECT u.id FROM sessions s JOIN users u ON u.id=s.user_id "
-                "WHERE s.token=? AND s.expires > ? AND u.disabled=0",
-                (token, dbm.now())).fetchone()
+        row = auth.user_from_request(websocket, db)
     finally:
         db.close()
     if not row:
@@ -85,10 +79,7 @@ async def ws_endpoint(websocket: WebSocket):
                 await asyncio.wait_for(websocket.receive_text(), timeout=25)
             vdb = dbm.connect()
             try:
-                ok = vdb.execute(
-                    "SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id "
-                    "WHERE s.token=? AND s.expires>? AND u.disabled=0",
-                    (token, dbm.now())).fetchone()
+                ok = auth.user_from_request(websocket, vdb)
             finally:
                 vdb.close()
             if not ok:

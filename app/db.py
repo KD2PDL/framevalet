@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
   can_upload INTEGER NOT NULL DEFAULT 1,
   can_delete_any INTEGER NOT NULL DEFAULT 0,    -- members: own uploads only unless set
   disabled INTEGER NOT NULL DEFAULT 0,
+  email TEXT,                                   -- set for SSO (Cloudflare Access) users
+  sso INTEGER NOT NULL DEFAULT 0,               -- 1 = auto-provisioned, no usable password
   created REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -125,8 +127,13 @@ def init():
             "Pre-release schema change: move the old data dir aside and start fresh.")
     db.executescript(SCHEMA)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    with __import__("contextlib").suppress(Exception):   # pre-release column adds
-        db.execute("ALTER TABLE photos ADD COLUMN matte TEXT")
+    for stmt in ("ALTER TABLE photos ADD COLUMN matte TEXT",       # pre-release column adds
+                 "ALTER TABLE users ADD COLUMN email TEXT",
+                 "ALTER TABLE users ADD COLUMN sso INTEGER NOT NULL DEFAULT 0"):
+        with __import__("contextlib").suppress(Exception):
+            db.execute(stmt)
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE) "
+               "WHERE email IS NOT NULL")
     if not config.APP_SECRET:
         row = db.execute("SELECT value FROM settings WHERE key='app_secret'").fetchone()
         if not row:

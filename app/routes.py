@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db as dbm, discovery, pipeline, worker
+from . import auth, cloudflare, config, db as dbm, discovery, pipeline, worker
 from .tvservice import (TVService, TVError, doctor as run_doctor,
                         SLIDESHOW_PRESETS, MOTION_TIMER_VALUES,
                         MOTION_SENSITIVITY, MATTE_TYPES, MATTE_COLORS)
@@ -67,7 +67,7 @@ def setup_post(request: Request, username: str = Form(...), password: str = Form
     auth.create_user(db, username, password, role="admin", can_delete_any=True)
     user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
     resp = RedirectResponse("/tvs", 303)
-    auth.set_cookie(resp, auth.start_session(db, user["id"]))
+    auth.set_cookie(resp, auth.start_session(db, user["id"]), request)
     return resp
 
 
@@ -75,7 +75,11 @@ def setup_post(request: Request, username: str = Form(...), password: str = Form
 def login_page(request: Request, db=Depends(dbm.get_db)):
     if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         return RedirectResponse("/setup", 303)
-    return render_page(request, db, "login.html", error=None)
+    # Came through Cloudflare Access but no account matched (auto-provision off
+    # or the account is disabled): say so instead of inviting a password guess.
+    claims = auth.sso_claims(request, db)
+    sso_email = (claims or {}).get("email") or (claims or {}).get("common_name") or ""
+    return render_page(request, db, "login.html", error=None, sso_email=sso_email)
 
 
 @router.post("/login")
@@ -90,7 +94,7 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
         auth.note_login_failure(ip)
         return render_page(request, db, "login.html", error="Wrong username or password")
     resp = RedirectResponse("/", 303)
-    auth.set_cookie(resp, auth.start_session(db, user["id"]))
+    auth.set_cookie(resp, auth.start_session(db, user["id"]), request)
     return resp
 
 
@@ -99,7 +103,10 @@ def logout(request: Request, db=Depends(dbm.get_db)):
     token = request.cookies.get(auth.COOKIE)
     if token:
         auth.end_session(db, token)
-    resp = RedirectResponse("/login", 303)
+    # Through Access the identity lives in Cloudflare's cookie, not ours, so
+    # hand off to its logout endpoint on this hostname or they're back in at once.
+    dest = "/cdn-cgi/access/logout" if auth.sso_claims(request, db) else "/login"
+    resp = RedirectResponse(dest, 303)
     resp.delete_cookie(auth.COOKIE)
     return resp
 
@@ -719,7 +726,9 @@ def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.requi
     return render_page(request, db, "admin.html", user,
                        users=[dict(u) for u in users],
                        settings=config.all_settings(db),
-                       watch=status_watch(db))
+                       watch=status_watch(db),
+                       tunnel=cloudflare.tunnel.state,
+                       access_enabled=cloudflare.access_enabled(db))
 
 
 @router.get("/admin/logs")
@@ -731,14 +740,41 @@ def admin_logs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 @router.post("/admin/settings")
 def save_settings(request: Request, db=Depends(dbm.get_db),
                   user=Depends(auth.require_admin),
-                  key: str = Form(...), value: str = Form("")):
+                  key: str = Form(...), value: str = Form(""), clear: str = Form("")):
     if key not in config.SETTINGS:
         raise HTTPException(400, "unknown setting")
+    value = value.strip()
+    if key in config.SECRET_KEYS and not value and not clear:
+        return RedirectResponse("/admin", 303)   # masked field left blank: keep it
     try:
-        config.set(db, key, value.strip())
+        config.set(db, key, value)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    if key == "cf_tunnel_token" and cloudflare.tunnel.state["wanted"]:
+        cloudflare.tunnel.stop() if not value else cloudflare.tunnel.restart(value)
+    if key == "cf_access_team":
+        cloudflare._jwks.clear()
     return RedirectResponse("/admin", 303)
+
+
+@router.post("/admin/tunnel")
+def tunnel_control(action: str = Form(...), db=Depends(dbm.get_db),
+                   user=Depends(auth.require_admin)):
+    if action == "start":
+        token = config.get(db, "cf_tunnel_token")
+        if not token:
+            raise HTTPException(400, "save a tunnel token first")
+        cloudflare.tunnel.start(token)
+    elif action == "stop":
+        cloudflare.tunnel.stop()
+    else:
+        raise HTTPException(400, "unknown action")
+    return RedirectResponse("/admin#remote", 303)
+
+
+@router.get("/admin/tunnel/status")
+def tunnel_status(user=Depends(auth.require_admin)):
+    return JSONResponse(cloudflare.tunnel.state)
 
 
 @router.post("/admin/branding-logo")

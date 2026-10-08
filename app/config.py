@@ -35,7 +35,17 @@ SETTINGS = {
     "pixabay_key":      ("PIXABAY_KEY", ""),
     "nasa_key":         ("NASA_KEY", "DEMO_KEY"),
     "rijksmuseum_key":  ("RIJKSMUSEUM_KEY", ""),
+    # Cloudflare Tunnel + Access (see cloudflare.py). Dashboard does the rest.
+    "cf_tunnel_token":  ("CF_TUNNEL_TOKEN", ""),
+    "cf_tunnel_autostart": ("CF_TUNNEL_AUTOSTART", "true"),
+    "cf_access_team":   ("CF_ACCESS_TEAM_DOMAIN", ""),  # e.g. acme.cloudflareaccess.com
+    "cf_access_aud":    ("CF_ACCESS_AUD", ""),          # application audience tag
+    "cf_access_autoprovision": ("CF_ACCESS_AUTO_PROVISION", "true"),
+    "cf_access_default_role": ("CF_ACCESS_DEFAULT_ROLE", "member"),
 }
+# Never echoed back to the browser; the UI shows "(set)" and a Clear button.
+SECRET_KEYS = {"cf_tunnel_token", "unsplash_key", "pexels_key", "pixabay_key",
+               "nasa_key", "rijksmuseum_key"}
 
 # Seed values for the first TV on an empty database (Docker-friendly).
 SEED_TV_HOST = os.environ.get("TV_HOST", "")
@@ -86,6 +96,10 @@ def set(db, key: str, value: str):
         raise ValueError("accent must be a hex color like #b8892f")
     if key == "rclone_remote" and value.startswith("-"):
         raise ValueError("rclone remote cannot start with '-'")
+    if key == "cf_access_default_role" and value not in ("member", "admin"):
+        raise ValueError("default role must be member or admin")
+    if key == "cf_access_team" and not _re.match(r"^(https?://)?[a-z0-9.-]*/?$", value, _re.I):
+        raise ValueError("team domain looks wrong (expected like acme.cloudflareaccess.com)")
     if key in ("jpeg_quality", "reconcile_minutes", "watch_interval", "rclone_interval"):
         try:
             n = int(value)
@@ -100,5 +114,6 @@ def set(db, key: str, value: str):
 
 
 def all_settings(db) -> dict:
-    return {k: {"value": get(db, k), "env_pinned": env_pinned(k), "env_var": SETTINGS[k][0]}
+    return {k: {"value": get(db, k), "env_pinned": env_pinned(k), "env_var": SETTINGS[k][0],
+                "secret": k in SECRET_KEYS}
             for k in SETTINGS}

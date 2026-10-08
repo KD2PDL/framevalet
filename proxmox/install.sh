@@ -42,11 +42,15 @@ echo "Installing framevalet..."
 pct exec "$CTID" -- bash -c "
 set -e
 apt-get update -qq
-apt-get install -y -qq git python3 python3-venv python3-pip rclone >/dev/null
+apt-get install -y -qq git python3 python3-venv python3-pip rclone curl ca-certificates >/dev/null
+# cloudflared (optional Cloudflare Tunnel, configured in Admin > Remote access)
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main' > /etc/apt/sources.list.d/cloudflared.list
+apt-get update -qq && apt-get install -y -qq cloudflared >/dev/null
 git clone -q $REPO /opt/framevalet
 python3 -m venv /opt/framevalet/.venv
 /opt/framevalet/.venv/bin/pip install -q /opt/framevalet
-mkdir -p /var/lib/framevalet
+mkdir -p /var/lib/framevalet && chmod 700 /var/lib/framevalet   # holds tokens
 cat > /etc/systemd/system/framevalet.service <<'UNIT'
 [Unit]
 Description=framevalet - Samsung Frame TV photo manager
@@ -73,4 +77,5 @@ echo "framevalet is running: http://$IP:8470"
 echo "First visit creates the admin account; then add your TV and pair."
 echo "For OneDrive sync: pct exec '$CTID' -- rclone config   (one time), then set"
 echo "the rclone remote in Admin > Settings."
+echo "For remote access: paste a Cloudflare Tunnel token in Admin > Remote access."
 echo "Update later with: pct exec $CTID -- bash -c 'cd /opt/framevalet && git pull && .venv/bin/pip install -q . && systemctl restart framevalet'"

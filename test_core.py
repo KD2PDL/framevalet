@@ -156,3 +156,77 @@ worker._scan_watch_folder(db)
 _c2 = db.execute("SELECT COUNT(*) c FROM photos WHERE source='folder'").fetchone()["c"]
 assert _c2 == 1, f"copy created a duplicate: {_c2}"
 print("watcher rename/copy dedup regression passed")
+
+
+# --- Cloudflare Access: signature/audience/issuer gate, then JIT provisioning
+import time as _time
+import jwt as _jwt
+from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+from app import cloudflare
+
+config.set(db, "cf_access_team", "acme")                 # bare team name is expanded
+assert cloudflare.team_domain(db) == "acme.cloudflareaccess.com"
+config.set(db, "cf_access_aud", "aud-123")
+_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_other = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class _FakeJWKS:                      # stands in for PyJWKClient (no network)
+    class _K:
+        key = _key.public_key()
+    def get_signing_key_from_jwt(self, token):
+        return self._K()
+
+
+cloudflare._jwks["acme.cloudflareaccess.com"] = _FakeJWKS()
+
+
+def _tok(signer=_key, **claims):
+    base = {"iss": "https://acme.cloudflareaccess.com", "aud": ["aud-123"],
+            "iat": int(_time.time()), "exp": int(_time.time()) + 300}
+    return _jwt.encode(base | claims, signer, algorithm="RS256")
+
+
+assert cloudflare.verify(db, _tok(email="Ann@Example.com"))["email"] == "Ann@Example.com"
+assert cloudflare.verify(db, _tok(signer=_other, email="x@y")) is None      # wrong key
+assert cloudflare.verify(db, _tok(aud=["other"], email="x@y")) is None      # wrong app
+assert cloudflare.verify(db, _tok(iss="https://evil.cloudflareaccess.com", email="x@y")) is None
+assert cloudflare.verify(db, _tok(exp=int(_time.time()) - 10, email="x@y")) is None
+assert cloudflare.verify(db, "not.a.jwt") is None
+
+# provisioning: username from the local part, case-insensitive email match
+auth.create_user(db, "ann", "localpassword", role="member")          # a local "ann" exists
+u = auth.sso_user(db, {"email": "Ann@Example.com"})
+assert u["username"] == "ann@example.com" and u["sso"] == 1 and u["role"] == "member", dict(u)
+assert auth.sso_user(db, {"email": "ANN@example.com"})["id"] == u["id"]   # no duplicate
+u2 = auth.sso_user(db, {"email": "dave@example.com"})
+assert u2["username"] == "dave" and u2["sso"] == 1
+assert auth.check_login(db, "dave", "") is None                       # no usable password
+config.set(db, "cf_access_autoprovision", "false")
+assert auth.sso_user(db, {"email": "carol@example.com"}) is None      # provisioning off
+# service tokens: common_name must match an existing username
+assert auth.sso_user(db, {"common_name": "ann"})["username"] == "ann"
+assert auth.sso_user(db, {"common_name": "nobody"}) is None
+
+# the request-level gate: header must verify, disabled users stay out
+class _Req:
+    def __init__(self, headers=None, cookies=None):
+        self.headers, self.cookies = headers or {}, cookies or {}
+        self.state = type("S", (), {})()
+assert auth.user_from_request(_Req({"cf-access-jwt-assertion": _tok(email="dave@example.com")}), db)["username"] == "dave"
+assert auth.user_from_request(_Req({"cf-access-jwt-assertion": _tok(signer=_other, email="dave@example.com")}), db) is None
+db.execute("UPDATE users SET disabled=1 WHERE username='dave'"); db.commit()
+assert auth.user_from_request(_Req({"cf-access-jwt-assertion": _tok(email="dave@example.com")}), db) is None
+config.set(db, "cf_access_aud", "")                                   # Access off: header ignored
+assert auth.user_from_request(_Req({"cf-access-jwt-assertion": _tok(email="ann@example.com")}), db) is None
+
+# tunnel supervisor: log lines drive the status, token never hits argv
+t = cloudflare.Tunnel()
+t._observe("2026-10-08T20:00:00Z INF Registered tunnel connection connIndex=0")
+t._observe("2026-10-08T20:00:01Z INF Registered tunnel connection connIndex=1")
+assert t.state["connections"] == 2
+t._observe("2026-10-08T20:00:02Z ERR Failed to dial a quic connection error=\"timeout\"")
+assert t.state["error"].startswith("Failed to dial")
+t._observe("2026-10-08T20:00:03Z INF Unregistered tunnel connection connIndex=1")
+assert t.state["connections"] == 1
+print("cloudflare: ok")

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, db as dbm, logbuf, routes, sources, worker, ws
+from . import auth, cloudflare, config, db as dbm, logbuf, routes, sources, worker, ws
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -52,8 +52,9 @@ def create_app() -> FastAPI:
         resp.headers.setdefault(
             "Content-Security-Policy",
             "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
-        if request.cookies.get(auth.COOKIE) or request.url.path in ("/login", "/setup"):
-            resp.headers["Cache-Control"] = "no-store"
+        if request.cookies.get(auth.COOKIE) or request.url.path in ("/login", "/setup") \
+           or "cf-access-jwt-assertion" in request.headers:
+            resp.headers["Cache-Control"] = "no-store"   # keep Cloudflare's edge cache out
         return resp
 
     @app.exception_handler(307)
@@ -64,6 +65,17 @@ def create_app() -> FastAPI:
     async def startup():
         ws.init(asyncio.get_running_loop())
         asyncio.create_task(worker.run())
+        db = dbm.connect()
+        try:
+            token = config.get(db, "cf_tunnel_token")
+            if token and config.get(db, "cf_tunnel_autostart") == "true":
+                cloudflare.tunnel.start(token)
+        finally:
+            db.close()
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        cloudflare.tunnel.stop()
 
     return app
 
