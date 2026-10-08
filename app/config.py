@@ -45,9 +45,11 @@ SETTINGS = {
     # Scheduled backups (see maint.py). Local archives are always kept (last 7).
     "backup_interval":  ("BACKUP_INTERVAL", "24"),      # hours; 0 = off
     "backup_remote":    ("BACKUP_REMOTE", ""),          # e.g. onedrive:FrameValet Backups
+    "backup_passphrase": ("BACKUP_PASSPHRASE", ""),     # set => archives are AES-256-GCM encrypted
+    "backup_ping_url":  ("BACKUP_PING_URL", ""),        # Uptime Kuma push URL (or any GET hook)
 }
 # Never echoed back to the browser; the UI shows "(set)" and a Clear button.
-SECRET_KEYS = {"cf_tunnel_token", "unsplash_key", "pexels_key", "pixabay_key",
+SECRET_KEYS = {"cf_tunnel_token", "backup_passphrase", "unsplash_key", "pexels_key", "pixabay_key",
                "nasa_key", "rijksmuseum_key"}
 
 # Seed values for the first TV on an empty database (Docker-friendly).
@@ -99,6 +101,8 @@ def set(db, key: str, value: str):
         raise ValueError("accent must be a hex color like #b8892f")
     if key in ("rclone_remote", "backup_remote") and value.startswith("-"):
         raise ValueError(f"{key} cannot start with '-'")
+    if key == "backup_ping_url" and value and not value.startswith(("http://", "https://")):
+        raise ValueError("ping URL must start with http:// or https://")
     if key == "backup_interval":
         if not value.isdigit():
             raise ValueError("backup interval must be a whole number of hours (0 = off)")

@@ -731,8 +731,7 @@ def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.requi
                        access_enabled=cloudflare.access_enabled(db),
                        update=maint.update_status(),
                        backup=dict(maint.status),
-                       backups=sorted((f.name for f in maint.BACKUP_DIR.glob("framevalet-*.tar.gz")),
-                                      reverse=True) if maint.BACKUP_DIR.is_dir() else [])
+                       backups=maint.list_backups())
 
 
 @router.get("/admin/logs")
@@ -796,6 +795,15 @@ def start_update(user=Depends(auth.require_admin)):
     return JSONResponse({"ok": True})
 
 
+@router.post("/admin/rollback")
+def rollback_app(user=Depends(auth.require_admin)):
+    try:
+        maint.rollback()
+    except Exception as e:
+        raise HTTPException(400, str(e)) from e
+    return JSONResponse({"ok": True})
+
+
 @router.post("/admin/restart")
 def restart_app(user=Depends(auth.require_admin)):
     maint.restart()
@@ -805,7 +813,7 @@ def restart_app(user=Depends(auth.require_admin)):
 @router.post("/admin/backup")
 def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
     try:
-        out = maint.make_backup()
+        out = maint.make_backup(config.get(db, "backup_passphrase"))
     except Exception as e:
         raise HTTPException(500, f"backup failed: {e}") from e
     return RedirectResponse("/admin#maint", 303)
@@ -814,18 +822,20 @@ def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 @router.get("/admin/backup/{name}")
 def download_backup(name: str, user=Depends(auth.require_admin)):
     path = maint.BACKUP_DIR / Path(name).name
-    if not (name.startswith("framevalet-") and name.endswith(".tar.gz") and path.is_file()):
+    if not (name.startswith("framevalet-") and (name.endswith(".tar.gz") or name.endswith(".tar.gz.enc"))
+            and path.is_file()):
         raise HTTPException(404)
-    return FileResponse(path, media_type="application/gzip", filename=path.name)
+    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
 
 
 @router.post("/admin/restore")
-async def restore(file: UploadFile = File(...), user=Depends(auth.require_admin)):
+async def restore(file: UploadFile = File(...), passphrase: str = Form(""),
+                  db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
     data = await file.read(150_000_001)
     if len(data) > 150_000_000:
         raise HTTPException(413, "backup archive too large")
     try:
-        info = maint.stage_restore(data)
+        info = maint.stage_restore(data, passphrase or config.get(db, "backup_passphrase"))
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     maint.restart()

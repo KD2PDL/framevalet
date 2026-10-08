@@ -18,12 +18,15 @@ import io
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import sys
 import tarfile
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from . import config
@@ -33,7 +36,9 @@ log = logging.getLogger("framevalet.maint")
 REPO = Path(__file__).resolve().parent.parent
 BACKUP_DIR = config.DATA_DIR / "backups"
 PENDING_DIR = config.DATA_DIR / "restore-pending"
+PREVIOUS_FILE = config.DATA_DIR / "update-previous"   # sha we were on before the last update
 KEEP_LOCAL = 7
+MAGIC = b"FVB1"      # encrypted archive: MAGIC + 16B salt + 12B nonce + AES-256-GCM(tar.gz)
 
 status = {"last_backup": 0.0, "last_error": "", "last_file": ""}
 
@@ -64,9 +69,12 @@ def update_status(refresh=False) -> dict:
     if not refresh and _update_cache["data"] and time.time() - _update_cache["at"] < 600:
         return _update_cache["data"]
     d = {"checkout": True, "can_update": can_self_manage(), "commit": "", "behind": None,
-         "latest": "", "error": ""}
+         "latest": "", "error": "", "previous": ""}
     try:
         d["commit"] = _git("rev-parse", "--short", "HEAD")
+        prev = PREVIOUS_FILE.read_text().strip() if PREVIOUS_FILE.exists() else ""
+        if prev and not _git("rev-parse", "--short", "HEAD").startswith(prev[:7]):
+            d["previous"] = prev[:7]
         d["date"] = _git("log", "-1", "--format=%cs")
         _git("fetch", "-q", "origin", "main", timeout=30)
         d["behind"] = int(_git("rev-list", "--count", "HEAD..origin/main"))
@@ -87,12 +95,30 @@ def start_update():
     if not (is_checkout() and can_self_manage()):
         raise RuntimeError("self-update needs a git checkout running under systemd")
     unit = os.environ.get("SYSTEMD_UNIT", "framevalet")
-    py = Path(sys.executable)
+    pip = Path(sys.executable).parent / "pip"
+    PREVIOUS_FILE.write_text(_git("rev-parse", "HEAD"))     # for Roll back
     _detached(f"framevalet-update-{int(time.time())}", (
-        f"cd {REPO} && git pull -q --ff-only && {py.parent / 'pip'} install -q . "
+        f"cd {REPO} && git checkout -q main && git pull -q --ff-only && {pip} install -q . "
         f"&& systemctl restart {unit}"))
     _update_cache["at"] = 0.0
     log.info("update started (origin/main)")
+
+
+def rollback():
+    """Check out the commit we were on before the last update (detached), so a
+    bad release is one click away from undone. Update now moves forward again."""
+    if not (is_checkout() and can_self_manage()):
+        raise RuntimeError("rollback needs a git checkout running under systemd")
+    prev = PREVIOUS_FILE.read_text().strip() if PREVIOUS_FILE.exists() else ""
+    if not prev:
+        raise RuntimeError("no previous version recorded")
+    _git("cat-file", "-e", f"{prev}^{{commit}}")
+    unit = os.environ.get("SYSTEMD_UNIT", "framevalet")
+    pip = Path(sys.executable).parent / "pip"
+    _detached(f"framevalet-rollback-{int(time.time())}", (
+        f"cd {REPO} && git checkout -q {prev} && {pip} install -q . && systemctl restart {unit}"))
+    _update_cache["at"] = 0.0
+    log.warning("rollback to %s started", prev[:7])
 
 
 def restart():
@@ -107,9 +133,50 @@ def restart():
 
 
 # -------------------------------------------------------------------- backup
-def make_backup() -> Path:
-    """Write backups/framevalet-<stamp>.tar.gz and return its path. Safe while
-    the app runs: the DB is copied through SQLite's online backup API."""
+def _key(passphrase: str, salt: bytes) -> bytes:
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    return Scrypt(salt=salt, length=32, n=2 ** 15, r=8, p=1).derive(passphrase.encode())
+
+
+def encrypt(data: bytes, passphrase: str) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
+    return MAGIC + salt + nonce + AESGCM(_key(passphrase, salt)).encrypt(nonce, data, MAGIC)
+
+
+def decrypt(blob: bytes, passphrase: str) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if not blob.startswith(MAGIC):
+        return blob
+    if not passphrase:
+        raise ValueError("this backup is encrypted: enter its passphrase")
+    salt, nonce, ct = blob[4:20], blob[20:32], blob[32:]
+    try:
+        return AESGCM(_key(passphrase, salt)).decrypt(nonce, ct, MAGIC)
+    except Exception as e:
+        raise ValueError("wrong passphrase (or corrupt archive)") from e
+
+
+def is_encrypted(blob: bytes) -> bool:
+    return blob.startswith(MAGIC)
+
+
+def ping(url: str, ok: bool, msg: str = ""):
+    """Uptime Kuma push semantics: a plain GET means up; status=down flags a
+    failure. Other webhook receivers simply get a GET either way."""
+    if not url:
+        return
+    try:
+        q = {"status": "up" if ok else "down", "msg": (msg or "OK")[:200]}
+        sep = "&" if "?" in url else "?"
+        urllib.request.urlopen(f"{url}{sep}{urllib.parse.urlencode(q)}", timeout=10).read(64)
+    except Exception as e:
+        log.warning("backup ping failed: %s", str(e)[:200])
+
+
+def make_backup(passphrase: str = "") -> Path:
+    """Write backups/framevalet-<stamp>.tar.gz(.enc) and return its path. Safe
+    while the app runs: the DB is copied through SQLite's online backup API."""
     import sqlite3
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -139,17 +206,29 @@ def make_backup() -> Path:
             tar.addfile(ti, io.BytesIO(meta))
     finally:
         tmp_db.unlink(missing_ok=True)
-    for old in sorted(BACKUP_DIR.glob("framevalet-*.tar.gz"))[:-KEEP_LOCAL]:
+    if passphrase:
+        enc = out.with_suffix(out.suffix + ".enc")
+        enc.write_bytes(encrypt(out.read_bytes(), passphrase))
+        out.unlink()
+        out = enc
+    for old in sorted(BACKUP_DIR.glob("framevalet-*.tar.gz*"))[:-KEEP_LOCAL]:
         old.unlink(missing_ok=True)
     status.update(last_backup=time.time(), last_file=out.name)
     return out
 
 
+def list_backups() -> list[str]:
+    if not BACKUP_DIR.is_dir():
+        return []
+    return sorted((f.name for f in BACKUP_DIR.glob("framevalet-*.tar.gz*")), reverse=True)
+
+
 def scheduled_backup(db):
     """Worker hook: local archive, then copy it (and sync originals) to the
-    rclone remote if one is configured."""
+    rclone remote if one is configured. Pings the health URL either way."""
+    url = config.get(db, "backup_ping_url").strip()
     try:
-        out = make_backup()
+        out = make_backup(config.get(db, "backup_passphrase"))
         remote = config.get(db, "backup_remote").strip()
         if remote and shutil.which("rclone"):
             for args in (["copy", str(out), f"{remote}/archives"],
@@ -159,18 +238,22 @@ def scheduled_backup(db):
                     raise RuntimeError(f"rclone {args[0]}: {r.stderr.strip()[-300:]}")
         status["last_error"] = ""
         log.info("backup written: %s%s", out.name, f" and copied to {remote}" if remote else "")
+        ping(url, True, out.name)
     except Exception as e:
         status["last_error"] = str(e)[:300]
         log.warning("backup failed: %s", e)
+        ping(url, False, str(e))
 
 
 # ------------------------------------------------------------------- restore
 _ALLOWED_DIRS = ("tokens", "branding")
 
 
-def stage_restore(data: bytes) -> dict:
+def stage_restore(data: bytes, passphrase: str = "") -> dict:
     """Validate an uploaded archive and unpack it into restore-pending/.
-    Only the exact members a backup contains are accepted."""
+    Only the exact members a backup contains are accepted, and the database
+    inside must match this build's schema (update first, then restore)."""
+    data = decrypt(data, passphrase)
     try:
         tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
     except tarfile.TarError as e:
@@ -196,7 +279,29 @@ def stage_restore(data: bytes) -> dict:
             dest.parent.mkdir(parents=True, exist_ok=True)
             with tar.extractfile(m) as src, open(dest, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+    try:
+        _check_schema(PENDING_DIR / "framevalet.db")
+    except ValueError:
+        shutil.rmtree(PENDING_DIR, ignore_errors=True)
+        raise
     return {"files": len(members)}
+
+
+def _check_schema(db_path: Path):
+    import sqlite3
+    from . import db as dbm
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        ver = con.execute("PRAGMA user_version").fetchone()[0]
+        con.execute("SELECT 1 FROM users LIMIT 1")
+        con.close()
+    except sqlite3.Error as e:
+        raise ValueError(f"archive's database is not a framevalet database: {e}") from e
+    if ver > dbm.SCHEMA_VERSION:
+        raise ValueError(f"backup is from a newer framevalet (schema v{ver}, this build is "
+                         f"v{dbm.SCHEMA_VERSION}): update first, then restore")
+    if ver not in (0, dbm.SCHEMA_VERSION):
+        raise ValueError(f"backup schema v{ver} is older than this build supports")
 
 
 def apply_pending_restore():

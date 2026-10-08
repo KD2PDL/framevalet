@@ -1608,6 +1608,13 @@
       try { await getJSON('/admin/update/status?refresh=true'); location.reload(); }
       catch (e) { toast(e.message); checkBtn.disabled = false; }
     });
+    const rollbackBtn = $('#rollbackBtn');
+    if (rollbackBtn) rollbackBtn.addEventListener('click', async () => {
+      if (!confirm(`Roll back to version ${rollbackBtn.dataset.sha} and restart?`)) return;
+      rollbackBtn.disabled = true;
+      try { await postJSON('/admin/rollback', {}); waitForRestart('Rolling back'); }
+      catch (e) { toast(e.message); rollbackBtn.disabled = false; }
+    });
     const restartBtn = $('#restartBtn');
     if (restartBtn) restartBtn.addEventListener('click', async () => {
       if (!confirm('Restart the app now?')) return;

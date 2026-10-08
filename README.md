@@ -134,7 +134,7 @@ with rclone preinstalled.
 | `JPEG_QUALITY`, `UNSHARP`, `RECONCILE_MINUTES` | Render/sync tuning |
 | `WATCH_ENABLED`, `WATCH_INTERVAL`, `RCLONE_REMOTE`, `RCLONE_INTERVAL` | Folder watcher + cloud sync |
 | `UNSPLASH_KEY`, `PEXELS_KEY`, `PIXABAY_KEY`, `NASA_KEY`, `RIJKSMUSEUM_KEY` | External source keys |
-| `BACKUP_INTERVAL`, `BACKUP_REMOTE` | Scheduled backups (hours, rclone remote) |
+| `BACKUP_INTERVAL`, `BACKUP_REMOTE`, `BACKUP_PASSPHRASE`, `BACKUP_PING_URL` | Scheduled backups (hours, rclone remote, encryption, health ping) |
 | `CF_TUNNEL_TOKEN`, `CF_TUNNEL_AUTOSTART` | Cloudflare Tunnel (see Remote access) |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `CF_ACCESS_AUTO_PROVISION`, `CF_ACCESS_DEFAULT_ROLE` | Cloudflare Access sign-in |
 
@@ -143,15 +143,23 @@ with rclone preinstalled.
 - **Update**: on a git checkout under systemd (the Proxmox installer), Admin
   shows the running commit and how many commits behind `origin/main` it is;
   **Update now** pulls, installs and restarts through a detached systemd unit.
-  Docker installs update by pulling a new image.
+  The commit you were on is remembered, so **Roll back** undoes a bad release
+  with one click. Docker installs update by pulling a new image.
 - **Backup**: a `tar.gz` of the database, TV pairing tokens and branding
   (everything that isn't a photo or a derived render). The last 7 live in
   `data/backups/` and are downloadable. Set an interval and, optionally, an
   rclone remote: each scheduled run copies the archive to `<remote>/archives`
-  and syncs `originals/` to `<remote>/originals`.
-- **Restore**: upload an archive; it's validated, staged, and applied on the
-  restart the UI triggers. Photos on disk are untouched. To move machines:
-  install, copy `originals/` over, restore the archive.
+  and syncs `originals/` to `<remote>/originals`. The archive contains secrets
+  (tunnel token, API keys, password hashes), so set a **passphrase** before
+  copying it anywhere: archives become AES-256-GCM encrypted `.tar.gz.enc`.
+  A **health ping URL** (Uptime Kuma push monitor, or any GET hook) is called
+  after each scheduled backup, with `status=down&msg=...` on failure, so you
+  find out when backups stop instead of when you need one.
+- **Restore**: upload an archive (plus passphrase if encrypted); it's
+  validated, checked against this build's schema version (update first if the
+  backup is newer), staged, and applied on the restart the UI triggers. Photos
+  on disk are untouched. To move machines: install, update, copy `originals/`
+  over, restore the archive.
 
 ## Remote access (Cloudflare Tunnel + Access)
 

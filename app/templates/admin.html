@@ -207,6 +207,7 @@
       <button type="button" class="btn btn-sm btn-primary" id="updateBtn" {% if not update.can_update or not update.behind %}disabled{% endif %}>Update now</button>
       <button type="button" class="btn btn-sm" id="updateCheckBtn">Check again</button>
       <button type="button" class="btn btn-sm" id="restartBtn">Restart app</button>
+      {% if update.previous and update.can_update %}<button type="button" class="btn btn-sm btn-danger" id="rollbackBtn" data-sha="{{ update.previous }}">Roll back to {{ update.previous }}</button>{% endif %}
     </div>
     {% if not update.can_update %}<p class="hint">Self-update needs the app running under systemd (the Proxmox installer does this). Otherwise: <code>cd /opt/framevalet &amp;&amp; git pull &amp;&amp; .venv/bin/pip install -q . &amp;&amp; systemctl restart framevalet</code></p>{% endif %}
     {% endif %}
@@ -229,10 +230,14 @@
     <div class="settings-grid">
       {{ setting_row('backup_interval', 'Automatic backup every (hours, 0 = off)', 'number', none) }}
       {{ setting_row('backup_remote', 'Copy backups to rclone remote', 'text', 'onedrive:FrameValet Backups') }}
+      {{ setting_row('backup_passphrase', 'Encrypt archives with passphrase', 'text', 'recommended before copying off-box') }}
+      {{ setting_row('backup_ping_url', 'Health ping URL (Uptime Kuma push)', 'text', 'https://status.example.com/api/push/abc123') }}
     </div>
     <p class="hint">
-      A backup holds the database (users, settings, library metadata), TV pairing tokens, and branding. The last 7 are kept locally.
+      A backup holds the database (users, settings, API keys, tunnel token, library metadata), TV pairing tokens, and branding. The last 7 are kept locally.
       With an rclone remote set, each scheduled backup is copied to <code>&lt;remote&gt;/archives</code> and <code>originals/</code> is synced to <code>&lt;remote&gt;/originals</code>, so a full rebuild is the archive plus that folder.
+      A passphrase encrypts the archive (AES-256-GCM) since it contains secrets; keep the passphrase somewhere else, it is needed to restore.
+      The ping URL is called after every scheduled backup, with <code>status=down</code> on failure, so a monitor can alert when backups stop.
     </p>
   </div>
 
@@ -240,10 +245,11 @@
     <h3>Restore</h3>
     <form method="post" action="/admin/restore" enctype="multipart/form-data" class="row-form" id="restoreForm"
           data-confirm="Restore replaces the current database, TV tokens and branding with the archive, then restarts the app. Photos on disk are kept. Continue?">
-      <input type="file" name="file" accept=".tar.gz,.tgz,application/gzip" required>
+      <input type="file" name="file" accept=".tar.gz,.tgz,.enc,application/gzip,application/octet-stream" required>
+      <input type="password" name="passphrase" placeholder="Passphrase (if encrypted)" autocomplete="off">
       <button class="btn btn-sm btn-danger">Restore and restart</button>
     </form>
-    <p class="hint">To move to a new machine: install framevalet there, copy <code>originals/</code> into its data directory, then restore a backup here.</p>
+    <p class="hint">To move to a new machine: install framevalet there, update it to at least the version that made the backup, copy <code>originals/</code> into its data directory, then restore here. Encrypted archives use the saved passphrase unless you enter one.</p>
   </div>
 </section>
 

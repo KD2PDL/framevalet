@@ -275,3 +275,46 @@ except ValueError:
 st = maint.update_status()
 assert "checkout" in st and (not st["checkout"] or st.get("can_update") in (True, False))
 print("maint: ok")
+
+
+# --- encrypted backups, passphrase handling, schema guard, rollback marker
+enc = maint.make_backup("hunter2-correct-horse")
+assert enc.name.endswith(".tar.gz.enc") and maint.is_encrypted(enc.read_bytes())
+assert maint.decrypt(enc.read_bytes(), "hunter2-correct-horse")[:2] == b"\x1f\x8b"   # gzip inside
+for bad in ("", "wrong"):
+    try:
+        maint.stage_restore(enc.read_bytes(), bad); raise AssertionError("accepted " + repr(bad))
+    except ValueError as e:
+        assert "passphrase" in str(e), e
+assert maint.stage_restore(enc.read_bytes(), "hunter2-correct-horse")["files"] >= 3
+import shutil as _sh; _sh.rmtree(maint.PENDING_DIR)
+assert enc.name in maint.list_backups() and maint.list_backups()[0] == enc.name
+# a backup from a newer schema is refused before anything is staged
+plain = maint.make_backup()
+tmp = config.DATA_DIR / "newer.db"; _sh.copy(config.DB_PATH, tmp)
+c = _sq.connect(tmp); c.execute("PRAGMA user_version = 99"); c.commit(); c.close()
+b = _io.BytesIO()
+with _tf.open(fileobj=b, mode="w:gz") as t:
+    t.add(tmp, arcname="framevalet.db")
+try:
+    maint.stage_restore(b.getvalue()); raise AssertionError("newer schema accepted")
+except ValueError as e:
+    assert "update first" in str(e), e
+assert not maint.PENDING_DIR.exists()
+# ping: failure carries status=down; never raises
+import http.server, threading as _th
+hits = []
+class _H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self): hits.append(self.path); self.send_response(200); self.end_headers()
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), _H); _th.Thread(target=srv.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{srv.server_port}/api/push/abc?ping="
+maint.ping(url, True, "x.tar.gz"); maint.ping(url, False, "rclone copy: boom")
+assert "status=up" in hits[0] and "status=down" in hits[1] and "boom" in hits[1], hits
+maint.ping("http://127.0.0.1:1/", False)                                   # unreachable: no raise
+# rollback marker: previous sha surfaces only when HEAD moved on
+maint.PREVIOUS_FILE.write_text("0000000deadbeef")
+st = maint.update_status(refresh=True)
+assert st["previous"] == "0000000" if st["checkout"] else True, st
+maint.PREVIOUS_FILE.unlink()
+print("maint extras: ok")
