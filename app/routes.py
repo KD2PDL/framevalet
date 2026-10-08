@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import auth, cloudflare, config, db as dbm, discovery, pipeline, worker
+from . import auth, cloudflare, config, db as dbm, discovery, maint, pipeline, worker
 from .tvservice import (TVService, TVError, doctor as run_doctor,
                         SLIDESHOW_PRESETS, MOTION_TIMER_VALUES,
                         MOTION_SENSITIVITY, MATTE_TYPES, MATTE_COLORS)
@@ -728,7 +728,11 @@ def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.requi
                        settings=config.all_settings(db),
                        watch=status_watch(db),
                        tunnel=cloudflare.tunnel.state,
-                       access_enabled=cloudflare.access_enabled(db))
+                       access_enabled=cloudflare.access_enabled(db),
+                       update=maint.update_status(),
+                       backup=dict(maint.status),
+                       backups=sorted((f.name for f in maint.BACKUP_DIR.glob("framevalet-*.tar.gz")),
+                                      reverse=True) if maint.BACKUP_DIR.is_dir() else [])
 
 
 @router.get("/admin/logs")
@@ -775,6 +779,57 @@ def tunnel_control(action: str = Form(...), db=Depends(dbm.get_db),
 @router.get("/admin/tunnel/status")
 def tunnel_status(user=Depends(auth.require_admin)):
     return JSONResponse(cloudflare.tunnel.state)
+
+
+# --------------------------------------------------------------- maintenance
+@router.get("/admin/update/status")
+def update_status(refresh: bool = False, user=Depends(auth.require_admin)):
+    return JSONResponse(maint.update_status(refresh=refresh))
+
+
+@router.post("/admin/update")
+def start_update(user=Depends(auth.require_admin)):
+    try:
+        maint.start_update()
+    except Exception as e:
+        raise HTTPException(400, str(e)) from e
+    return JSONResponse({"ok": True})
+
+
+@router.post("/admin/restart")
+def restart_app(user=Depends(auth.require_admin)):
+    maint.restart()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/admin/backup")
+def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+    try:
+        out = maint.make_backup()
+    except Exception as e:
+        raise HTTPException(500, f"backup failed: {e}") from e
+    return RedirectResponse("/admin#maint", 303)
+
+
+@router.get("/admin/backup/{name}")
+def download_backup(name: str, user=Depends(auth.require_admin)):
+    path = maint.BACKUP_DIR / Path(name).name
+    if not (name.startswith("framevalet-") and name.endswith(".tar.gz") and path.is_file()):
+        raise HTTPException(404)
+    return FileResponse(path, media_type="application/gzip", filename=path.name)
+
+
+@router.post("/admin/restore")
+async def restore(file: UploadFile = File(...), user=Depends(auth.require_admin)):
+    data = await file.read(150_000_001)
+    if len(data) > 150_000_000:
+        raise HTTPException(413, "backup archive too large")
+    try:
+        info = maint.stage_restore(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    maint.restart()
+    return JSONResponse({"ok": True, "staged": info["files"]})
 
 
 @router.post("/admin/branding-logo")

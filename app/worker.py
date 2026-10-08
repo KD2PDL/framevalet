@@ -18,7 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import config, db as dbm, pipeline, ws
+from . import config, db as dbm, maint, pipeline, ws
 from .tvservice import TVService, TVError, TVUnauthorized
 
 log = logging.getLogger("framevalet.worker")
@@ -459,6 +459,7 @@ def _sweep_cache(db):
 async def run():
     log.info("worker started")
     last_watch = last_rclone = last_sweep = 0.0
+    last_backup = time.time()          # first scheduled backup one interval after boot
     while True:
         db = dbm.connect()
         try:
@@ -471,6 +472,11 @@ async def run():
                time.time() - last_watch > int(config.get(db, "watch_interval")):
                 await asyncio.to_thread(_scan_watch_folder, db)
                 last_watch = time.time()
+
+            hours = int(config.get(db, "backup_interval") or 0)
+            if hours and time.time() - last_backup > hours * 3600:
+                await asyncio.to_thread(maint.scheduled_backup, db)
+                last_backup = time.time()
 
             if time.time() - last_sweep > 86400:      # daily orphan-cache sweep
                 await asyncio.to_thread(_sweep_cache, db)

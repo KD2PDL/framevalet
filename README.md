@@ -134,8 +134,24 @@ with rclone preinstalled.
 | `JPEG_QUALITY`, `UNSHARP`, `RECONCILE_MINUTES` | Render/sync tuning |
 | `WATCH_ENABLED`, `WATCH_INTERVAL`, `RCLONE_REMOTE`, `RCLONE_INTERVAL` | Folder watcher + cloud sync |
 | `UNSPLASH_KEY`, `PEXELS_KEY`, `PIXABAY_KEY`, `NASA_KEY`, `RIJKSMUSEUM_KEY` | External source keys |
+| `BACKUP_INTERVAL`, `BACKUP_REMOTE` | Scheduled backups (hours, rclone remote) |
 | `CF_TUNNEL_TOKEN`, `CF_TUNNEL_AUTOSTART` | Cloudflare Tunnel (see Remote access) |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `CF_ACCESS_AUTO_PROVISION`, `CF_ACCESS_DEFAULT_ROLE` | Cloudflare Access sign-in |
+
+## Update, backup, restore (Admin › Maintenance)
+
+- **Update**: on a git checkout under systemd (the Proxmox installer), Admin
+  shows the running commit and how many commits behind `origin/main` it is;
+  **Update now** pulls, installs and restarts through a detached systemd unit.
+  Docker installs update by pulling a new image.
+- **Backup**: a `tar.gz` of the database, TV pairing tokens and branding
+  (everything that isn't a photo or a derived render). The last 7 live in
+  `data/backups/` and are downloadable. Set an interval and, optionally, an
+  rclone remote: each scheduled run copies the archive to `<remote>/archives`
+  and syncs `originals/` to `<remote>/originals`.
+- **Restore**: upload an archive; it's validated, staged, and applied on the
+  restart the UI triggers. Photos on disk are untouched. To move machines:
+  install, copy `originals/` over, restore the archive.
 
 ## Remote access (Cloudflare Tunnel + Access)
 

@@ -42,6 +42,9 @@ SETTINGS = {
     "cf_access_aud":    ("CF_ACCESS_AUD", ""),          # application audience tag
     "cf_access_autoprovision": ("CF_ACCESS_AUTO_PROVISION", "true"),
     "cf_access_default_role": ("CF_ACCESS_DEFAULT_ROLE", "member"),
+    # Scheduled backups (see maint.py). Local archives are always kept (last 7).
+    "backup_interval":  ("BACKUP_INTERVAL", "24"),      # hours; 0 = off
+    "backup_remote":    ("BACKUP_REMOTE", ""),          # e.g. onedrive:FrameValet Backups
 }
 # Never echoed back to the browser; the UI shows "(set)" and a Clear button.
 SECRET_KEYS = {"cf_tunnel_token", "unsplash_key", "pexels_key", "pixabay_key",
@@ -94,8 +97,11 @@ def set(db, key: str, value: str):
         raise ValueError(f"{key} is pinned by environment variable {SETTINGS[key][0]}")
     if key == "brand_accent" and value and not _HEX_COLOR.match(value):
         raise ValueError("accent must be a hex color like #b8892f")
-    if key == "rclone_remote" and value.startswith("-"):
-        raise ValueError("rclone remote cannot start with '-'")
+    if key in ("rclone_remote", "backup_remote") and value.startswith("-"):
+        raise ValueError(f"{key} cannot start with '-'")
+    if key == "backup_interval":
+        if not value.isdigit():
+            raise ValueError("backup interval must be a whole number of hours (0 = off)")
     if key == "cf_access_default_role" and value not in ("member", "admin"):
         raise ValueError("default role must be member or admin")
     if key == "cf_access_team" and not _re.match(r"^(https?://)?[a-z0-9.-]*/?$", value, _re.I):

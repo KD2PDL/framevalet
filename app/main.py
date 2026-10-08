@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, cloudflare, config, db as dbm, logbuf, routes, sources, worker, ws
+from . import auth, cloudflare, config, db as dbm, logbuf, maint, routes, sources, worker, ws
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -14,6 +14,8 @@ logbuf.install()
 
 
 def create_app() -> FastAPI:
+    config.ensure_dirs()
+    maint.apply_pending_restore()
     dbm.init()
     db = dbm.connect()
     # headless bootstrap: ADMIN_USER/ADMIN_PASSWORD env creates the first admin

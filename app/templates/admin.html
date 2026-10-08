@@ -41,6 +41,7 @@
     <a href="#users">Users</a>
     <a href="#settings">Settings</a>
     <a href="#remote">Remote access</a>
+    <a href="#maint">Maintenance</a>
     <a href="#automation">Automation</a>
     <a href="#logs">Logs</a>
   </nav>
@@ -186,6 +187,63 @@
       Visitors who pass Access skip the password form; the app verifies Cloudflare's signed token on every request, so removing someone in Cloudflare locks them out at once.
       Local username/password login keeps working on the LAN. Non-browser clients use an Access service token whose Client ID matches a local username.
     </p>
+  </div>
+</section>
+
+<section id="maint" class="admin-section">
+  <h2>Maintenance</h2>
+  <div class="panel">
+    <h3>Update</h3>
+    {% if not update.checkout %}
+    <p class="status-item">Installed from an image. Update by pulling a new image and recreating the container{% if update.docker %} (<code>docker compose pull &amp;&amp; docker compose up -d</code>){% endif %}.</p>
+    {% else %}
+    <p class="status-item" id="updateStatus">
+      Running <code>{{ update.commit }}</code>{% if update.date %} ({{ update.date }}){% endif %}.
+      {% if update.behind is none %}<span class="muted">Could not check for updates{% if update.error %}: {{ update.error }}{% endif %}</span>
+      {% elif update.behind == 0 %}Up to date.
+      {% else %}<strong>{{ update.behind }} update{{ '' if update.behind == 1 else 's' }} available</strong>{% if update.latest %}: {{ update.latest }}{% endif %}{% endif %}
+    </p>
+    <div class="row-form">
+      <button type="button" class="btn btn-sm btn-primary" id="updateBtn" {% if not update.can_update or not update.behind %}disabled{% endif %}>Update now</button>
+      <button type="button" class="btn btn-sm" id="updateCheckBtn">Check again</button>
+      <button type="button" class="btn btn-sm" id="restartBtn">Restart app</button>
+    </div>
+    {% if not update.can_update %}<p class="hint">Self-update needs the app running under systemd (the Proxmox installer does this). Otherwise: <code>cd /opt/framevalet &amp;&amp; git pull &amp;&amp; .venv/bin/pip install -q . &amp;&amp; systemctl restart framevalet</code></p>{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h3>Backup</h3>
+    <p class="status-item">
+      {% if backup.last_backup %}Last backup <span data-ago="{{ backup.last_backup }}">&hellip;</span> ({{ backup.last_file }}){% else %}No backup made yet this session{% endif %}
+      {% if backup.last_error %}<span class="status-err">{{ backup.last_error }}</span>{% endif %}
+    </p>
+    <form method="post" action="/admin/backup" class="row-form">
+      <button class="btn btn-sm btn-primary">Back up now</button>
+    </form>
+    {% if backups %}
+    <ul class="backup-list">
+      {% for b in backups %}<li><a href="/admin/backup/{{ b }}">{{ b }}</a></li>{% endfor %}
+    </ul>
+    {% endif %}
+    <div class="settings-grid">
+      {{ setting_row('backup_interval', 'Automatic backup every (hours, 0 = off)', 'number', none) }}
+      {{ setting_row('backup_remote', 'Copy backups to rclone remote', 'text', 'onedrive:FrameValet Backups') }}
+    </div>
+    <p class="hint">
+      A backup holds the database (users, settings, library metadata), TV pairing tokens, and branding. The last 7 are kept locally.
+      With an rclone remote set, each scheduled backup is copied to <code>&lt;remote&gt;/archives</code> and <code>originals/</code> is synced to <code>&lt;remote&gt;/originals</code>, so a full rebuild is the archive plus that folder.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h3>Restore</h3>
+    <form method="post" action="/admin/restore" enctype="multipart/form-data" class="row-form" id="restoreForm"
+          data-confirm="Restore replaces the current database, TV tokens and branding with the archive, then restarts the app. Photos on disk are kept. Continue?">
+      <input type="file" name="file" accept=".tar.gz,.tgz,application/gzip" required>
+      <button class="btn btn-sm btn-danger">Restore and restart</button>
+    </form>
+    <p class="hint">To move to a new machine: install framevalet there, copy <code>originals/</code> into its data directory, then restore a backup here.</p>
   </div>
 </section>
 

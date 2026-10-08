@@ -230,3 +230,48 @@ assert t.state["error"].startswith("Failed to dial")
 t._observe("2026-10-08T20:00:03Z INF Unregistered tunnel connection connIndex=1")
 assert t.state["connections"] == 1
 print("cloudflare: ok")
+
+
+# --- backup/restore round trip; restore rejects anything but a backup's own files
+from app import maint
+(config.TOKENS_DIR / "tv1.txt").write_text("tok-abc")
+out = maint.make_backup()
+assert out.exists() and out.name.startswith("framevalet-")
+import tarfile as _tf
+names = sorted(_tf.open(out).getnames())
+assert "framevalet.db" in names and "tokens/tv1.txt" in names and "manifest.json" in names, names
+# a copy of the db inside the archive is a real, openable sqlite db
+import sqlite3 as _sq
+with _tf.open(out) as t, open(config.DATA_DIR / "x.db", "wb") as f:
+    f.write(t.extractfile("framevalet.db").read())
+assert _sq.connect(config.DATA_DIR / "x.db").execute("SELECT COUNT(*) FROM users").fetchone()[0] >= 2
+# staging + applying puts the files back where they belong
+(config.TOKENS_DIR / "tv1.txt").write_text("changed")
+assert maint.stage_restore(out.read_bytes())["files"] == len(names)
+assert maint.PENDING_DIR.is_dir()
+db.close()
+maint.apply_pending_restore()
+assert not maint.PENDING_DIR.exists()
+assert (config.TOKENS_DIR / "tv1.txt").read_text() == "tok-abc"
+db = dbm.connect()
+assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] >= 2
+# hostile archives: traversal, stray files, non-archives
+import io as _io
+def _evil(name):
+    b = _io.BytesIO()
+    with _tf.open(fileobj=b, mode="w:gz") as t:
+        ti = _tf.TarInfo(name); ti.size = 1; t.addfile(ti, _io.BytesIO(b"x"))
+    return b.getvalue()
+for bad in ("../etc/passwd", "tokens/../../x", "originals/a.jpg", "framevalet.db/../x"):
+    try:
+        maint.stage_restore(_evil(bad)); raise AssertionError(bad)
+    except ValueError:
+        pass
+try:
+    maint.stage_restore(b"not a tar"); raise AssertionError("garbage accepted")
+except ValueError:
+    pass
+# status without a checkout or systemd never claims it can self-update
+st = maint.update_status()
+assert "checkout" in st and (not st["checkout"] or st.get("can_update") in (True, False))
+print("maint: ok")

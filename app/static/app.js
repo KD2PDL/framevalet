@@ -1578,6 +1578,53 @@
     }, 5000);
   }
 
+  /* ------------------------------------------------- admin maintenance */
+  const updateBtn = $('#updateBtn');
+  if (updateBtn || $('#restartBtn') || $('#restoreForm')) {
+    // Wait for the app to go away and come back, then reload the page.
+    async function waitForRestart(label) {
+      const status = $('#updateStatus');
+      const started = Date.now();
+      let wentDown = false;
+      if (status) status.textContent = `${label}… this page reloads when the app is back.`;
+      while (Date.now() - started < 180000) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const r = await fetch('/login', { cache: 'no-store' });
+          if (r.ok && wentDown) { location.reload(); return; }
+        } catch (_) { wentDown = true; }
+      }
+      toast('Still waiting for the app. Reload the page manually.');
+    }
+    if (updateBtn) updateBtn.addEventListener('click', async () => {
+      if (!confirm('Pull the latest version and restart the app?')) return;
+      updateBtn.disabled = true;
+      try { await postJSON('/admin/update', {}); waitForRestart('Updating'); }
+      catch (e) { toast(e.message); updateBtn.disabled = false; }
+    });
+    const checkBtn = $('#updateCheckBtn');
+    if (checkBtn) checkBtn.addEventListener('click', async () => {
+      checkBtn.disabled = true;
+      try { await getJSON('/admin/update/status?refresh=true'); location.reload(); }
+      catch (e) { toast(e.message); checkBtn.disabled = false; }
+    });
+    const restartBtn = $('#restartBtn');
+    if (restartBtn) restartBtn.addEventListener('click', async () => {
+      if (!confirm('Restart the app now?')) return;
+      try { await postJSON('/admin/restart', {}); waitForRestart('Restarting'); }
+      catch (e) { toast(e.message); }
+    });
+    const restoreForm = $('#restoreForm');
+    if (restoreForm) restoreForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!confirm(restoreForm.dataset.confirm)) return;
+      try {
+        await post('/admin/restore', new FormData(restoreForm));
+        waitForRestart('Restoring');
+      } catch (err) { toast(err.message); }
+    }, true);
+  }
+
   /* ---------------------------------------------------------- admin logs */
   const logBox = $('#logBox');
   if (logBox) {
