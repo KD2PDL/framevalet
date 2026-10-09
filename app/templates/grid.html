@@ -27,6 +27,9 @@
     <button type="button" class="chip" data-filter="external">External</button>
   </div>
   <div class="toolbar-right">
+    <select id="sortSelect" class="tag-filter" aria-label="Sort photos">
+      {% for k, label in sorts %}<option value="{{ k }}" {% if k == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
     {% if all_tags %}
     <select id="tagFilter" class="tag-filter" aria-label="Filter by tag">
       <option value="">All tags</option>

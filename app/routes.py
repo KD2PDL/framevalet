@@ -149,11 +149,20 @@ def logout(request: Request, db=Depends(dbm.get_db)):
 
 
 # ------------------------------------------------------------------- library
-def _photo_dicts(db, user):
+SORTS = {   # key -> (label, ORDER BY)
+    "added_desc": ("Newest added", "p.created DESC, p.id DESC"),
+    "added_asc":  ("Oldest added", "p.created ASC, p.id ASC"),
+    "taken_desc": ("Date taken, newest", "(p.taken_date IS NULL), p.taken_date DESC, p.id DESC"),
+    "taken_asc":  ("Date taken, oldest", "(p.taken_date IS NULL), p.taken_date ASC, p.id ASC"),
+    "name":       ("Name", "p.filename COLLATE NOCASE ASC, p.id ASC"),
+}
+
+
+def _photo_dicts(db, user, sort="added_desc"):
     photos = db.execute(
         "SELECT p.*, u.username AS uploader FROM photos p "
         "LEFT JOIN users u ON u.id=p.uploaded_by "
-        "ORDER BY p.taken_date DESC, p.id DESC").fetchall()
+        "ORDER BY " + SORTS.get(sort, SORTS["added_desc"])[1]).fetchall()
     tvstates = {}
     for r in db.execute("SELECT tv_id, photo_id, status, error FROM tv_photos"):
         tvstates.setdefault(r["photo_id"], {})[r["tv_id"]] = \
@@ -187,10 +196,13 @@ def _photo_dicts(db, user):
 
 
 @router.get("/")
-def home(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
+def home(request: Request, sort: str = "added_desc", db=Depends(dbm.get_db),
+         user=Depends(auth.current_user)):
     all_tags = [r["name"] for r in db.execute("SELECT name FROM tags ORDER BY name")]
+    sort = sort if sort in SORTS else "added_desc"
     return render_page(request, db, "grid.html", user,
-                       photos=_photo_dicts(db, user), all_tags=all_tags,
+                       photos=_photo_dicts(db, user, sort), all_tags=all_tags,
+                       sort=sort, sorts=[(k, v[0]) for k, v in SORTS.items()],
                        matte_types=MATTE_TYPES, matte_colors=MATTE_COLORS,
                        import_state=dict(worker.import_state))
 

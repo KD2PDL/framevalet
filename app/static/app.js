@@ -261,6 +261,25 @@
   }
 
   /* ------------------------------------------------------------- filters */
+  // Sort: a server-side query param, remembered per device.
+  const sortSel = $('#sortSelect');
+  if (sortSel) {
+    const url = new URL(location.href);
+    let stored = null;
+    try { stored = localStorage.getItem('fv-sort'); } catch (_) { /* private mode */ }
+    if (!url.searchParams.has('sort') && stored && stored !== sortSel.value
+        && [...sortSel.options].some((o) => o.value === stored)) {
+      url.searchParams.set('sort', stored);
+      location.replace(url.toString());
+    }
+    sortSel.addEventListener('change', () => {
+      try { localStorage.setItem('fv-sort', sortSel.value); } catch (_) { /* ignore */ }
+      const u = new URL(location.href);
+      u.searchParams.set('sort', sortSel.value);
+      location.href = u.toString();
+    });
+  }
+
   const chips = $('#filterChips');
   const tagFilter = $('#tagFilter');
   const filterState = { chip: 'all', tag: '' };

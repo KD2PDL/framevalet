@@ -577,3 +577,21 @@ _w._fire_schedules(db, tvrow, art)
 assert len(art.selected) == 1 and art.selected[0].startswith("MY_"), art.selected
 assert db.execute("SELECT last_fired FROM schedules WHERE tv_id=?", (tvrow["id"],)).fetchone()["last_fired"] > 0
 print("schedule guard: ok")
+
+
+# --- sort orders: newest added first by default; undated photos sort last by date taken
+with TestClient(_app) as c:
+    c.post("/login", data={"username": "alice", "password": "s3cure-pass-1"}, headers={"Origin": "http://testserver"})
+    import re as _re
+    def ids(path):
+        h = c.get(path).text
+        return [int(m) for m in _re.findall(r'data-id="(\d+)"', h)]
+    default = ids("/"); added = ids("/?sort=added_desc"); oldest = ids("/?sort=added_asc"); taken = ids("/?sort=taken_desc")
+    assert default == added and added == list(reversed(oldest)) and len(added) > 3
+    created = {r["id"]: r["created"] for r in db.execute("SELECT id, created FROM photos")}
+    assert all(created[a] >= created[b] for a, b in zip(added, added[1:]))
+    dated = {r["id"] for r in db.execute("SELECT id FROM photos WHERE taken_date IS NOT NULL")}
+    first_undated = next(i for i, pid in enumerate(taken) if pid not in dated)
+    assert all(pid in dated for pid in taken[:first_undated]) and all(pid not in dated for pid in taken[first_undated:])
+    assert ids("/?sort=bogus") == added
+print("sort: ok")
