@@ -734,3 +734,4 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .perm-note { grid-column: 1 / -1; margin: 0 .2rem; font-size: .82rem; }
 .perm-actions { display: flex; gap: .4rem; margin-top: .6rem; }
 .new-user-form { max-width: 560px; }
+.new-user-form .perm-opt { flex-direction: row; font-weight: 500; }
