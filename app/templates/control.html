@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Control</h1>
+  <p class="muted">The everyday buttons. Setup lives on the TVs page.</p>
+</div>
+
+{% for t in tvs if t.enabled %}
+<section class="tv-card ctl-card" data-tv="{{ t.id }}">
+  <div class="tv-head">
+    <h2>{{ t.name }}</h2>
+    <span class="pill {{ 'pill-ok' if t.status.ok else 'pill-warn' }}" data-ctl-pill>
+      <span class="pill-dot"></span><span data-ctl-text>{{ 'connected' if t.status.ok else (t.status.error or 'checking') }}</span>
+    </span>
+  </div>
+  <p class="muted ctl-state" data-ctl-state>&nbsp;</p>
+
+  <div class="ctl-groups">
+    <div class="ctl-group">
+      <h3>Power</h3>
+      <div class="ctl-row">
+        <button type="button" class="btn" data-ctl="wake" {% if not t.mac %}disabled title="Add the TV's MAC address on the TVs page to enable Wake"{% endif %}>Wake</button>
+        <button type="button" class="btn" data-ctl="artmode_on">Art Mode on</button>
+        <button type="button" class="btn" data-ctl="artmode_off">Art Mode off</button>
+      </div>
+      <p class="hint">Art Mode off shows the TV's normal input. Wake works over Wi-Fi only if the TV allows it.</p>
+    </div>
+
+    <div class="ctl-group">
+      <h3>Slideshow</h3>
+      <div class="ctl-row">
+        <label>Change every
+          <select data-ctl-minutes>
+            {% for m in presets %}<option value="{{ m }}" {% if m == 30 %}selected{% endif %}>{{ m }} min</option>{% endfor %}
+          </select>
+        </label>
+        <label class="check-label"><input type="checkbox" data-ctl-shuffle checked> Shuffle</label>
+        <button type="button" class="btn btn-primary" data-ctl="slideshow_start">Start</button>
+        <button type="button" class="btn" data-ctl="slideshow_stop">Stop</button>
+      </div>
+      <p class="hint">The TV's own slideshow through everything in its My Photos. Stop leaves the current photo up.</p>
+    </div>
+
+    <div class="ctl-group">
+      <h3>Show a photo now</h3>
+      <div class="ctl-row">
+        <button type="button" class="btn" data-ctl="show_random">Random</button>
+        <button type="button" class="btn" data-ctl="show_favorite">Random favorite</button>
+      </div>
+      <p class="hint">Switches the TV to Art Mode if it isn't already, so don't press it while someone is watching.</p>
+    </div>
+  </div>
+</section>
+{% else %}
+<p class="muted">No TV is set up yet.</p>
+{% endfor %}
+{% endblock %}

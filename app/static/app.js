@@ -1696,6 +1696,49 @@
     }, true);
   }
 
+  /* ------------------------------------------------------------- control */
+  $$('.ctl-card').forEach((card) => {
+    const tv = card.dataset.tv;
+    const stateEl = card.querySelector('[data-ctl-state]');
+    const pill = card.querySelector('[data-ctl-pill]');
+    const pillText = card.querySelector('[data-ctl-text]');
+    async function refresh() {
+      try {
+        const s = await getJSON(`/control/${tv}/state`);
+        pill.classList.toggle('pill-ok', s.reachable); pill.classList.toggle('pill-warn', !s.reachable);
+        pillText.textContent = s.reachable ? 'connected' : 'unreachable';
+        const parts = [];
+        if (s.artmode != null) parts.push(`Art Mode ${String(s.artmode).toLowerCase() === 'on' ? 'on' : 'off'}`);
+        if (s.slideshow && typeof s.slideshow === 'object') {
+          const v = s.slideshow.value ?? s.slideshow.duration ?? s.slideshow.type;
+          if (v != null) parts.push(`slideshow ${String(v) === 'off' || String(v) === '0' ? 'off' : 'on'}`);
+        }
+        stateEl.textContent = parts.join(' · ') || (s.reachable ? 'ready' : 'TV is off or asleep');
+      } catch (_) { stateEl.textContent = ''; }
+    }
+    card.querySelectorAll('[data-ctl]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.ctl;
+        const body = { action };
+        if (action === 'slideshow_start') {
+          body.minutes = parseInt(card.querySelector('[data-ctl-minutes]').value, 10);
+          body.shuffle = card.querySelector('[data-ctl-shuffle]').checked;
+        }
+        btn.disabled = true;
+        try {
+          await postJSON(`/control/${tv}`, body);
+          toast({ wake: 'Wake sent', artmode_on: 'Art Mode on', artmode_off: 'Art Mode off',
+                  slideshow_start: 'Slideshow started', slideshow_stop: 'Slideshow stopped',
+                  show_random: 'Showing a photo', show_favorite: 'Showing a favorite' }[action] || 'Done', 'success');
+          setTimeout(refresh, 1500);
+        } catch (e) { toast(e.message); }
+        finally { btn.disabled = false; }
+      });
+    });
+    refresh();
+    setInterval(refresh, 30000);
+  });
+
   /* ---------------------------------------------------------- admin logs */
   const logBox = $('#logBox');
   if (logBox) {

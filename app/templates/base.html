@@ -65,6 +65,9 @@
     {% if user %}
     <nav class="nav">
       <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Photos</a>
+      {% if can(user, 'control') %}
+      <a href="/control" class="{{ 'active' if request.url.path.startswith('/control') else '' }}">Control</a>
+      {% endif %}
       {% if can(user, 'tvs') %}
       <a href="/tvs" class="{{ 'active' if request.url.path.startswith('/tvs') else '' }}">TVs</a>
       {% endif %}

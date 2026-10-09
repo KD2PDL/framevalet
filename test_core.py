@@ -595,3 +595,40 @@ with TestClient(_app) as c:
     assert all(pid in dated for pid in taken[:first_undated]) and all(pid not in dated for pid in taken[first_undated:])
     assert ids("/?sort=bogus") == added
 print("sort: ok")
+
+
+# --- control page: its own permission, actions reach the TV service, setup stays on /tvs
+auth.create_user(db, "remote", "s3cure-pass-7", perms=["control"])
+class _CtlSvc:
+    calls = []
+    def __init__(self, row): pass
+    def port_open(self): return True
+    def artmode_settings(self): return {"artmode": "on", "slideshow": {"value": "off"}}
+    def set_artmode(self, on): _CtlSvc.calls.append(("artmode", on))
+    def set_slideshow(self, minutes, shuffle=True): _CtlSvc.calls.append(("slideshow", minutes, shuffle))
+    def select(self, cid, attempts=4): _CtlSvc.calls.append(("select", cid))
+    def wake(self, mac): _CtlSvc.calls.append(("wake", mac))
+    def reset(self): pass
+_orig_routes_svc = _routes.TVService; _routes.TVService = _CtlSvc
+try:
+    with TestClient(_app) as c:
+        c.post("/login", data={"username": "remote", "password": "s3cure-pass-7"}, headers={"Origin": "http://testserver"})
+        assert c.get("/control").status_code == 200
+        assert c.get("/tvs").status_code == 403                                   # setup needs 'tvs'
+        home = c.get("/").text
+        assert ">Control<" in home and ">TVs<" not in home
+        H = {"Origin": "http://testserver"}
+        tid = tvrow["id"]
+        assert c.post(f"/control/{tid}", json={"action": "artmode_on"}, headers=H).status_code == 200
+        assert c.post(f"/control/{tid}", json={"action": "slideshow_start", "minutes": 30, "shuffle": False}, headers=H).status_code == 200
+        assert c.post(f"/control/{tid}", json={"action": "slideshow_start", "minutes": 7}, headers=H).status_code == 400
+        assert c.post(f"/control/{tid}", json={"action": "slideshow_stop"}, headers=H).status_code == 200
+        assert c.post(f"/control/{tid}", json={"action": "show_random"}, headers=H).status_code == 200
+        assert c.post(f"/control/{tid}", json={"action": "wake"}, headers=H).status_code == 400   # no MAC on this test TV
+        assert c.post(f"/control/{tid}", json={"action": "nope"}, headers=H).status_code == 400
+        st = c.get(f"/control/{tid}/state").json(); assert st["reachable"] and st["artmode"] == "on"
+    assert ("artmode", True) in _CtlSvc.calls and ("slideshow", 30, False) in _CtlSvc.calls and ("slideshow", 0, True) in _CtlSvc.calls
+    assert any(k[0] == "select" for k in _CtlSvc.calls)
+finally:
+    _routes.TVService = _orig_routes_svc
+print("control: ok")

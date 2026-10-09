@@ -603,6 +603,74 @@ def status_watch(db):
             "rclone": dict(worker.status["rclone"])}
 
 
+# --------------------------------------------------------------- TV control
+@router.get("/control")
+def control_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require("control"))):
+    return render_page(request, db, "control.html", user,
+                       presets=[m for m in SLIDESHOW_PRESETS if m])
+
+
+@router.get("/control/{tv_id}/state")
+def control_state(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("control"))):
+    """Best-effort live state: reachable, Art Mode on/off, slideshow."""
+    tv = _tv(db, tv_id)
+    svc = TVService(tv)
+    out = {"reachable": svc.port_open(), "artmode": None, "slideshow": None}
+    if out["reachable"]:
+        st = svc.artmode_settings()
+        out["artmode"] = st.get("artmode")
+        out["slideshow"] = st.get("slideshow")
+    svc.reset()
+    return JSONResponse(out)
+
+
+@router.post("/control/{tv_id}")
+def control_action(tv_id: int, body: dict = Body(...), db=Depends(dbm.get_db),
+                   user=Depends(auth.require("control"))):
+    """Body: {"action": wake | artmode_on | artmode_off | slideshow_start |
+    slideshow_stop | show_random | show_favorite, "minutes": N}."""
+    tv = _tv(db, tv_id)
+    action = body.get("action")
+    svc = TVService(tv)
+    try:
+        if action == "wake":
+            if not tv["mac"]:
+                raise HTTPException(400, "no MAC address set for this TV (TVs page)")
+            svc.wake(tv["mac"])
+            return JSONResponse({"ok": True})
+        if not svc.port_open():
+            raise HTTPException(502, "TV is unreachable right now; try Wake")
+        if action == "artmode_on":
+            svc.set_artmode(True)
+        elif action == "artmode_off":
+            svc.set_artmode(False)
+        elif action == "slideshow_start":
+            minutes = int(body.get("minutes") or 30)
+            if minutes not in SLIDESHOW_PRESETS or minutes == 0:
+                raise HTTPException(400, "minutes must be one of the TV's presets")
+            svc.set_slideshow(minutes, bool(body.get("shuffle", True)))
+        elif action == "slideshow_stop":
+            svc.set_slideshow(0)
+        elif action in ("show_random", "show_favorite"):
+            q = ("SELECT tp.content_id, p.favorite FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+                 "WHERE tp.tv_id=? AND tp.status='on_tv' AND tp.content_id IS NOT NULL")
+            pool = db.execute(q, (tv_id,)).fetchall()
+            if action == "show_favorite":
+                pool = [r for r in pool if r["favorite"]] or pool
+            if not pool:
+                raise HTTPException(404, "no photos on this TV yet")
+            import random as _random
+            svc.select(_random.choice(pool)["content_id"], attempts=1)
+        else:
+            raise HTTPException(400, "unknown action")
+        worker.log.info("TV %s control: %s by %s", tv_id, action, user["username"])
+    except (TVError, ValueError) as e:
+        raise HTTPException(502, str(e)) from e
+    finally:
+        svc.reset()
+    return JSONResponse({"ok": True})
+
+
 # ------------------------------------------------------------------ TV pages
 @router.get("/tvs")
 def tvs_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):

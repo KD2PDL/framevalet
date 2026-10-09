@@ -23,6 +23,7 @@ COOKIE = "fv_session"
 PERMS = {
     "upload":     "Upload photos",
     "delete_any": "Delete anyone's photos",
+    "control":    "Control the TV",
     "tvs":        "Manage TVs",
     "users":      "Manage users",
     "settings":   "Settings & maintenance",
@@ -31,7 +32,8 @@ PERMS = {
 PERM_HINTS = {
     "upload":     "add photos from any device",
     "delete_any": "members otherwise delete only their own uploads",
-    "tvs":        "pairing, art mode, schedules, import from TV",
+    "control":    "wake, Art Mode on/off, slideshow, show a photo now",
+    "tvs":        "pairing, art mode settings, schedules, import from TV",
     "users":      "create users and edit their access",
     "settings":   "settings, remote access, update, backup, restore",
     "logs":       "live view and log file downloads",
