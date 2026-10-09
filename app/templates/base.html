@@ -22,7 +22,10 @@
 <header class="site-head">
   <div class="head-inner">
     <a class="brand" href="/">
-      {% if brand.logo_url %}
+      {% if brand.logo_url == '/static/logo.png' %}
+        <img class="logo-light" src="/static/logo.png" alt="{{ brand.name }}">
+        <img class="logo-dark" src="/static/logo-dark.png" alt="{{ brand.name }}">
+      {% elif brand.logo_url %}
         <img src="{{ brand.logo_url }}" alt="{{ brand.name }}">
       {% else %}
         <span class="brand-name">{{ brand.name }}</span>

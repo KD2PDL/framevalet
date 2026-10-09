@@ -91,6 +91,9 @@ a { color: var(--accent-deep); }
 .theme-toggle { margin-left: auto; font-size: 1.05rem; line-height: 1; padding: .3rem .5rem; }
 :root[data-theme="dark"] .tt-moon { display: none; }
 :root:not([data-theme="dark"]) .tt-sun { display: none; }
+/* stock wordmark is dark ink; swap to the light-ink file on dark backgrounds */
+:root[data-theme="dark"] .brand .logo-light { display: none; }
+:root:not([data-theme="dark"]) .brand .logo-dark { display: none; }
 .logout-form { margin-left: 0; }
 
 @media (min-width: 700px) {
