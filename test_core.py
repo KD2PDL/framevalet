@@ -357,17 +357,45 @@ maint.auto_update()                                   # not under systemd here: 
 print("versions: ok")
 
 
-# --- role toggle guards: last admin stays admin, promotion grants delete-any
+# --- permissions: migration from old flags, can(), gates, editor guards
 from fastapi import HTTPException as _HE
 from app import routes as _routes
-admin_row = db.execute("SELECT * FROM users WHERE username='alice'").fetchone()
-alice_id = admin_row["id"]
-db.execute("UPDATE users SET role='member' WHERE role='admin' AND id!=?", (alice_id,)); db.commit()
+# old-style rows got perms folded in at init; ann was created with upload
+assert auth.can(db.execute("SELECT * FROM users WHERE username='ann'").fetchone(), "upload")
+alice = db.execute("SELECT * FROM users WHERE username='alice'").fetchone()        # admin
+assert auth.perms_of(alice) == set(auth.PERMS)
+auth.create_user(db, "tvguy", "s3cure-pass-9", perms=["tvs", "logs"])
+tvguy = db.execute("SELECT * FROM users WHERE username='tvguy'").fetchone()
+assert auth.can(tvguy, "tvs") and auth.can(tvguy, "logs") and not auth.can(tvguy, "users") and not auth.can(tvguy, "upload")
+assert tvguy["can_upload"] == 0                                                     # legacy column kept in sync
 try:
-    _routes.edit_user(alice_id, action="toggle_role", db=db, user=admin_row); raise AssertionError("demoted last admin")
+    auth.require("users")(user=tvguy); raise AssertionError("gate let tvguy manage users")
+except _HE as e:
+    assert e.status_code == 403
+assert auth.require_any_admin(user=tvguy)["username"] == "tvguy"                   # can open Admin (logs)
+try:
+    auth.require_any_admin(user=db.execute("SELECT * FROM users WHERE username='ann'").fetchone()); raise AssertionError()
+except _HE:
+    pass
+# editor: non-admin with 'users' cannot grant admin; last admin cannot be demoted
+auth.set_perms(db, tvguy["id"], ["users"])
+tvguy = db.execute("SELECT * FROM users WHERE id=?", (tvguy["id"],)).fetchone()
+try:
+    _routes.edit_user(tvguy["id"], action="perms", role="admin", perms=["upload"], db=db, user=tvguy); raise AssertionError("self-promotion")
+except _HE as e:
+    assert e.status_code == 403
+db.execute("UPDATE users SET role='member' WHERE role='admin' AND id!=?", (alice["id"],)); db.commit()
+try:
+    _routes.edit_user(alice["id"], action="perms", role="", perms=["upload"], db=db, user=alice); raise AssertionError("demoted last admin")
 except _HE as e:
     assert e.status_code == 400
-_routes.edit_user(db.execute("SELECT id FROM users WHERE username='ann'").fetchone()["id"], action="toggle_role", db=db, user=admin_row)
-ann = db.execute("SELECT role, can_delete_any FROM users WHERE username='ann'").fetchone()
-assert ann["role"] == "admin" and ann["can_delete_any"] == 1, dict(ann)
-print("roles: ok")
+_routes.edit_user(tvguy["id"], action="perms", role="admin", perms=[], db=db, user=alice)
+assert db.execute("SELECT role FROM users WHERE id=?", (tvguy["id"],)).fetchone()["role"] == "admin"
+_routes.edit_user(tvguy["id"], action="perms", role="", perms=["upload", "tvs"], db=db, user=alice)
+tvguy = db.execute("SELECT * FROM users WHERE id=?", (tvguy["id"],)).fetchone()
+assert tvguy["role"] == "member" and auth.perms_of(tvguy) == {"upload", "tvs"}
+# tunnel self-cut guard
+class _R:
+    def __init__(self, h): self.headers = h
+assert _routes._via_tunnel(_R({"cf-connecting-ip": "1.2.3.4"})) and not _routes._via_tunnel(_R({}))
+print("perms: ok")

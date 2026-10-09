@@ -206,7 +206,7 @@ def search(source: str, q: str = "", page: int = 1,
 @router.post("/sources/import")
 def import_image(body: dict = Body(...), db=Depends(dbm.get_db),
                  user=Depends(auth.current_user)):
-    if not user["can_upload"]:
+    if not auth.can(user, "upload"):
         raise HTTPException(403, "uploads not allowed for this account")
     url, title, source = body.get("url", ""), body.get("title", ""), body.get("source", "")
     parts = urlsplit(url)

@@ -50,8 +50,10 @@
     {% if user %}
     <nav class="nav">
       <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Photos</a>
-      {% if user.role == 'admin' %}
+      {% if can(user, 'tvs') %}
       <a href="/tvs" class="{{ 'active' if request.url.path.startswith('/tvs') else '' }}">TVs</a>
+      {% endif %}
+      {% if can(user, 'users') or can(user, 'settings') or can(user, 'logs') %}
       <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">Admin</a>
       {% endif %}
     </nav>

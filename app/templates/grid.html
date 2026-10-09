@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 
-{% if user.can_upload %}
+{% if can(user, 'upload') %}
 <section class="upload-zone" id="dropZone">
   <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif" hidden>
   <button type="button" class="btn btn-primary btn-big" id="uploadBtn">Add photos</button>
@@ -89,7 +89,7 @@
 {% if not photos %}
 <div class="empty-state">
   <p>No photos yet.</p>
-  {% if user.can_upload %}<p class="muted">Tap <strong>Add photos</strong> above to get started.</p>{% endif %}
+  {% if can(user, 'upload') %}<p class="muted">Tap <strong>Add photos</strong> above to get started.</p>{% endif %}
 </div>
 {% endif %}
 

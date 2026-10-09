@@ -41,49 +41,54 @@
 <div class="page-head">
   <h1>Admin</h1>
   <nav class="anchor-nav">
-    <a href="#users">Users</a>
-    <a href="#settings">Settings</a>
-    <a href="#remote">Remote access</a>
-    <a href="#maint">Maintenance</a>
+    {% if can(user, 'users') %}<a href="#users">Users</a>{% endif %}
+    {% if can(user, 'settings') %}<a href="#settings">Settings</a><a href="#remote">Remote access</a><a href="#maint">Maintenance</a>{% endif %}
     <a href="#automation">Automation</a>
-    <a href="#logs">Logs</a>
+    {% if can(user, 'logs') %}<a href="#logs">Logs</a>{% endif %}
   </nav>
 </div>
 
+{% if can(user, 'users') %}
 <section id="users" class="admin-section">
   <h2>Users</h2>
   <div class="table-scroll">
     <table class="table">
       <thead>
-        <tr><th>User</th><th>Role</th><th>Flags</th><th>Actions</th></tr>
+        <tr><th>User</th><th>Access</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for u in users %}
         <tr>
-          <td><strong>{{ u.username }}</strong>{% if u.email %}<br><span class="muted">{{ u.email }}</span>{% endif %}</td>
-          <td>{{ u.role }}</td>
-          <td class="flag-cell">
-            {% if u.disabled %}<span class="tag tag-red">disabled</span>{% endif %}
-            {% if u.sso %}<span class="tag">sso</span>{% endif %}
-            {% if u.can_upload %}<span class="tag">upload</span>{% endif %}
-            {% if u.can_delete_any %}<span class="tag">delete any</span>{% endif %}
+          <td><strong>{{ u.username }}</strong>{% if u.email %}<br><span class="muted">{{ u.email }}</span>{% endif %}
+            <div class="flag-cell">
+              {% if u.disabled %}<span class="tag tag-red">disabled</span>{% endif %}
+              {% if u.sso %}<span class="tag">sso</span>{% endif %}
+            </div>
+          </td>
+          <td class="perm-cell">
+            {% if u.role == 'admin' %}<span class="tag tag-frame">admin: everything</span>
+            {% elif u.perm_set %}{% for k in PERMS if k in u.perm_set %}<span class="tag">{{ PERMS[k].split(' (')[0] | lower }}</span>{% endfor %}
+            {% else %}<span class="muted">view only</span>{% endif %}
           </td>
           <td class="action-cell">
+            <details class="tv-fold perm-fold">
+              <summary>Edit access</summary>
+              <form method="post" action="/admin/users/{{ u.id }}" class="perm-form">
+                <input type="hidden" name="action" value="perms">
+                {% if user.role == 'admin' %}
+                <label class="check-label perm-admin"><input type="checkbox" name="role" value="admin" {% if u.role == 'admin' %}checked{% endif %}> <strong>Administrator</strong> <span class="muted">(everything below, plus roles)</span></label>
+                {% elif u.role == 'admin' %}
+                <p class="muted">Administrator. Only an admin can change that.</p>
+                {% endif %}
+                {% for k, label in PERMS.items() %}
+                <label class="check-label"><input type="checkbox" name="perms" value="{{ k }}" {% if k in u.perm_set %}checked{% endif %}> {{ label }}</label>
+                {% endfor %}
+                <button class="btn btn-sm btn-primary">Save access</button>
+              </form>
+            </details>
             <form method="post" action="/admin/users/{{ u.id }}">
               <input type="hidden" name="action" value="toggle_disabled">
               <button class="btn btn-sm">{{ 'Enable' if u.disabled else 'Disable' }}</button>
-            </form>
-            <form method="post" action="/admin/users/{{ u.id }}">
-              <input type="hidden" name="action" value="toggle_role">
-              <button class="btn btn-sm">{{ 'Make member' if u.role == 'admin' else 'Make admin' }}</button>
-            </form>
-            <form method="post" action="/admin/users/{{ u.id }}">
-              <input type="hidden" name="action" value="toggle_upload">
-              <button class="btn btn-sm">{{ 'Revoke upload' if u.can_upload else 'Allow upload' }}</button>
-            </form>
-            <form method="post" action="/admin/users/{{ u.id }}">
-              <input type="hidden" name="action" value="toggle_delete_any">
-              <button class="btn btn-sm">{{ 'Revoke delete-any' if u.can_delete_any else 'Allow delete-any' }}</button>
             </form>
             <form method="post" action="/admin/users/{{ u.id }}" class="inline-pw">
               <input type="hidden" name="action" value="set_password">
@@ -106,19 +111,26 @@
     <form method="post" action="/admin/users" class="new-user-form">
       <label>Username <input type="text" name="username" required></label>
       <label>Password <input type="password" name="password" minlength="8" required></label>
+      {% if user.role == 'admin' %}
       <label>Role
         <select name="role">
           <option value="member" selected>member</option>
           <option value="admin">admin</option>
         </select>
       </label>
-      <label class="check-label"><input type="checkbox" name="can_upload" value="true" checked> Can upload</label>
-      <label class="check-label"><input type="checkbox" name="can_delete_any" value="true"> Can delete anyone's photos</label>
+      {% endif %}
+      <div class="perm-form">
+        {% for k, label in PERMS.items() %}
+        <label class="check-label"><input type="checkbox" name="perms" value="{{ k }}" {% if k == 'upload' %}checked{% endif %}> {{ label }}</label>
+        {% endfor %}
+      </div>
       <button class="btn btn-primary">Create user</button>
     </form>
   </div>
 </section>
+{% endif %}
 
+{% if can(user, 'settings') %}
 <section id="settings" class="admin-section">
   <h2>Settings</h2>
 
@@ -164,7 +176,9 @@
       {% if tunnel.error %}<span class="status-err">{{ tunnel.error }}</span>{% endif %}
     </p>
     <form method="post" action="/admin/tunnel" class="row-form">
-      {% if tunnel.wanted %}
+      {% if tunnel.wanted and via_tunnel %}
+      <span class="muted">You are connected through this tunnel. Stop it from the LAN.</span>
+      {% elif tunnel.wanted %}
       <input type="hidden" name="action" value="stop"><button class="btn btn-sm">Stop tunnel</button>
       {% else %}
       <input type="hidden" name="action" value="start">
@@ -265,6 +279,8 @@
   </div>
 </section>
 
+{% endif %}
+
 <section id="automation" class="admin-section">
   <h2>Automation</h2>
   <div class="panel">
@@ -285,6 +301,7 @@
   </div>
 </section>
 
+{% if can(user, 'logs') %}
 <section id="logs" class="admin-section">
   <h2>Logs</h2>
   <div class="panel">
@@ -323,4 +340,5 @@
     <p class="hint">Rotates at 5 MB, keeps 5 files (about 30 MB of history). Also in the host journal: <code>journalctl -u framevalet</code> or <code>docker logs</code>.</p>
   </div>
 </section>
+{% endif %}
 {% endblock %}

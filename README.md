@@ -45,8 +45,10 @@ everything in sync, even when the TV is off.
   thumbnails) so the app manages your existing collection.
 - **Respects other sources**: photos added via SmartThings show as "external"
   and are never touched automatically.
-- **Multi-user with an admin panel**: local accounts (argon2), roles, per-user
-  permissions. Members delete only their own uploads by default.
+- **Multi-user with an admin panel**: local accounts (argon2) or Cloudflare
+  Access SSO, with per-user access: upload, delete anyone's photos, manage
+  TVs, manage users, settings and maintenance, view logs. Admins have all of
+  it. Members delete only their own uploads by default.
 - **TV Doctor**: per-TV diagnostics that turn every Samsung failure mode into
   the exact remote-control menu fix, plus a guided pairing wizard.
 - **White-label**: brand name, logo, and accent color are configurable.

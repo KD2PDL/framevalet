@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
   disabled INTEGER NOT NULL DEFAULT 0,
   email TEXT,                                   -- set for SSO (Cloudflare Access) users
   sso INTEGER NOT NULL DEFAULT 0,               -- 1 = auto-provisioned, no usable password
+  perms TEXT,                                   -- comma list, see auth.PERMS; admins have all
   created REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -129,11 +130,15 @@ def init():
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     for stmt in ("ALTER TABLE photos ADD COLUMN matte TEXT",       # pre-release column adds
                  "ALTER TABLE users ADD COLUMN email TEXT",
-                 "ALTER TABLE users ADD COLUMN sso INTEGER NOT NULL DEFAULT 0"):
+                 "ALTER TABLE users ADD COLUMN sso INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE users ADD COLUMN perms TEXT"):
         with __import__("contextlib").suppress(Exception):
             db.execute(stmt)
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE) "
                "WHERE email IS NOT NULL")
+    # one-time: fold the old flag columns into the perms list
+    db.execute("UPDATE users SET perms = TRIM(CASE WHEN can_upload THEN 'upload,' ELSE '' END || "
+               "CASE WHEN can_delete_any THEN 'delete_any' ELSE '' END, ',') WHERE perms IS NULL")
     if not config.APP_SECRET:
         row = db.execute("SELECT value FROM settings WHERE key='app_secret'").fetchone()
         if not row:

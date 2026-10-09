@@ -713,3 +713,12 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 }
 .bulk-matte-menu .matte-swatch.active { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bulk-matte-menu .bm-apply { margin-top: .2rem; }
+
+/* per-user access editor */
+.perm-cell { min-width: 9rem; }
+.perm-cell .tag { margin: 0 .2rem .2rem 0; }
+.perm-fold { width: 100%; }
+.perm-form { display: grid; gap: .3rem; padding: .4rem .8rem .7rem; }
+.perm-form .perm-admin { padding-bottom: .3rem; border-bottom: 1px solid var(--line); margin-bottom: .2rem; }
+.perm-form .btn { justify-self: start; margin-top: .3rem; }
+.new-user-form .perm-form { padding: 0; }

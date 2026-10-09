@@ -19,13 +19,47 @@ SESSION_DAYS = 90
 COOKIE = "fv_session"
 
 
+# Granular permissions. 'admin' role implies all of them plus managing roles.
+PERMS = {
+    "upload":     "Upload photos",
+    "delete_any": "Delete anyone's photos",
+    "tvs":        "Manage TVs (pairing, art mode, schedules, import)",
+    "users":      "Manage users",
+    "settings":   "Settings, remote access, maintenance",
+    "logs":       "View logs",
+}
+ADMIN_PERMS = ("tvs", "users", "settings", "logs")   # any of these opens the Admin/TVs nav
+
+
+def perms_of(user) -> set:
+    if user is None:
+        return set()
+    if user["role"] == "admin":
+        return set(PERMS)
+    return {p for p in (user["perms"] or "").split(",") if p}
+
+
+def can(user, perm: str) -> bool:
+    return perm in perms_of(user)
+
+
+def set_perms(db, uid: int, perms) -> None:
+    perms = [p for p in PERMS if p in set(perms)]
+    db.execute("UPDATE users SET perms=?, can_upload=?, can_delete_any=? WHERE id=?",
+               (",".join(perms), int("upload" in perms), int("delete_any" in perms), uid))
+    db.commit()
+
+
 def create_user(db, username, password, role="member", can_upload=True, can_delete_any=False,
-                email=None, sso=False):
+                email=None, sso=False, perms=None):
+    if perms is None:
+        perms = (["upload"] if can_upload else []) + (["delete_any"] if can_delete_any else [])
+    perms = [p for p in PERMS if p in set(perms)]
     db.execute(
-        "INSERT INTO users(username, pw_hash, role, can_upload, can_delete_any, email, sso, created) "
-        "VALUES(?,?,?,?,?,?,?,?)",
-        (username.strip(), ph.hash(password), role, int(can_upload), int(can_delete_any),
-         email, int(sso), dbm.now()))
+        "INSERT INTO users(username, pw_hash, role, can_upload, can_delete_any, email, sso, perms, created) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (username.strip(), ph.hash(password), role, int("upload" in perms), int("delete_any" in perms),
+         email, int(sso), ",".join(perms), dbm.now()))
     db.commit()
 
 
@@ -150,7 +184,22 @@ def require_admin(user=Depends(current_user)):
     return user
 
 
+def require(perm: str):
+    """Dependency factory: the signed-in user must hold `perm` (admins hold all)."""
+    def dep(user=Depends(current_user)):
+        if not can(user, perm):
+            raise HTTPException(403, f"needs permission: {PERMS.get(perm, perm)}")
+        return user
+    return dep
+
+
+def require_any_admin(user=Depends(current_user)):
+    if not (perms_of(user) & set(ADMIN_PERMS)):
+        raise HTTPException(403, "no administrative permissions")
+    return user
+
+
 def can_delete(user, photo) -> bool:
-    if user["role"] == "admin" or user["can_delete_any"]:
+    if can(user, "delete_any"):
         return True
     return photo["uploaded_by"] == user["id"] and photo["source"] == "upload"

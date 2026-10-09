@@ -16,6 +16,8 @@ from .tvservice import (TVService, TVError, doctor as run_doctor,
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["can"] = auth.can
+templates.env.globals["PERMS"] = auth.PERMS
 
 
 def render_page(request, db, name, user=None, **ctx):
@@ -161,7 +163,7 @@ def home(request: Request, db=Depends(dbm.get_db), user=Depends(auth.current_use
 @router.post("/upload")
 async def upload(request: Request, files: list[UploadFile] = File(...),
                  db=Depends(dbm.get_db), user=Depends(auth.current_user)):
-    if not user["can_upload"]:
+    if not auth.can(user, "upload"):
         raise HTTPException(403, "uploads not allowed for this account")
     if len(files) > 200:
         raise HTTPException(413, "too many files in one upload (max 200)")
@@ -519,7 +521,7 @@ def status_watch(db):
 
 # ------------------------------------------------------------------ TV pages
 @router.get("/tvs")
-def tvs_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def tvs_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     details = []
     for t in db.execute("SELECT * FROM tvs ORDER BY id").fetchall():
         svc = TVService(t)
@@ -540,7 +542,7 @@ def tvs_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require
 
 
 @router.get("/tvs/discover")
-async def discover_tvs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+async def discover_tvs(db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     """SSDP scan (~3s). Returns Samsung TVs found on the LAN, Frames first.
     Inside Docker bridge networking this finds nothing; add by IP instead."""
     import asyncio as _aio
@@ -554,7 +556,7 @@ async def discover_tvs(db=Depends(dbm.get_db), user=Depends(auth.require_admin))
 @router.post("/tvs")
 def add_tv(name: str = Form(...), host: str = Form(...), mac: str = Form(""),
            client_name: str = Form("framevalet"),
-           db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+           db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     db.execute("INSERT INTO tvs(name, host, mac, client_name, created) VALUES(?,?,?,?,?)",
                (name.strip(), host.strip(), mac.strip(), client_name.strip(), dbm.now()))
     db.commit()
@@ -566,7 +568,7 @@ def edit_tv(tv_id: int, name: str = Form(...), host: str = Form(...),
             mac: str = Form(""), default_matte: str = Form("flexible_antique"),
             output_res: str = Form("4k"), auto_assign: bool = Form(False),
             enabled: bool = Form(False),
-            db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+            db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     _tv(db, tv_id)
     db.execute("UPDATE tvs SET name=?, host=?, mac=?, default_matte=?, output_res=?, "
                "auto_assign=?, enabled=? WHERE id=?",
@@ -579,7 +581,7 @@ def edit_tv(tv_id: int, name: str = Form(...), host: str = Form(...),
 
 
 @router.post("/tvs/{tv_id}/delete")
-def delete_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def delete_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     _tv(db, tv_id)
     db.execute("DELETE FROM tvs WHERE id=?", (tv_id,))
     db.commit()
@@ -590,7 +592,7 @@ def delete_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admi
 
 @router.get("/tvs/{tv_id}/doctor")
 def tv_doctor(request: Request, tv_id: int, db=Depends(dbm.get_db),
-              user=Depends(auth.require_admin)):
+              user=Depends(auth.require("tvs"))):
     tv = _tv(db, tv_id)
     steps = run_doctor(tv)
     return render_page(request, db, "doctor.html", user, steps=steps,
@@ -598,7 +600,7 @@ def tv_doctor(request: Request, tv_id: int, db=Depends(dbm.get_db),
 
 
 @router.post("/tvs/{tv_id}/pair")
-def pair(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def pair(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     svc = TVService(_tv(db, tv_id))
     try:
         svc.pair()
@@ -608,7 +610,7 @@ def pair(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 
 
 @router.post("/tvs/{tv_id}/wake")
-def wake(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def wake(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     tv = _tv(db, tv_id)
     if not tv["mac"]:
         raise HTTPException(400, "no MAC address set for this TV")
@@ -617,7 +619,7 @@ def wake(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 
 
 @router.get("/tvs/{tv_id}/artmode")
-def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     svc = TVService(_tv(db, tv_id))
     try:
         if not svc.port_open():
@@ -629,7 +631,7 @@ def artmode_get(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_ad
 
 @router.post("/tvs/{tv_id}/artmode")
 def artmode_set(tv_id: int, body: dict = Body(...), db=Depends(dbm.get_db),
-                      user=Depends(auth.require_admin)):
+                      user=Depends(auth.require("tvs"))):
     """Body: one or more of {artmode, brightness, color_temperature, motion_timer,
     motion_sensitivity, brightness_sensor, slideshow_minutes, slideshow_shuffle}."""
     svc = TVService(_tv(db, tv_id))
@@ -667,7 +669,7 @@ def artmode_set(tv_id: int, body: dict = Body(...), db=Depends(dbm.get_db),
 
 
 @router.post("/tvs/{tv_id}/import")
-def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     _tv(db, tv_id)
     if worker.import_state["running"]:
         raise HTTPException(409, "an import is already running")
@@ -676,7 +678,7 @@ def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admi
 
 
 @router.get("/tvs/{tv_id}/export")
-def export_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def export_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     tv = _tv(db, tv_id)
     token = ""
     with contextlib.suppress(OSError):
@@ -693,7 +695,7 @@ def add_schedule(tv_id: int, mode: str = Form("random"),
                  interval_minutes: int = Form(60), time_start: str = Form(""),
                  time_end: str = Form(""), days: list[str] = Form([]),
                  tag: str = Form(""),
-                 db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+                 db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     _tv(db, tv_id)
     if mode not in ("random", "sequential", "favorites"):
         raise HTTPException(400, "bad mode")
@@ -708,7 +710,7 @@ def add_schedule(tv_id: int, mode: str = Form("random"),
 
 @router.post("/schedules/{sid}")
 def edit_schedule(sid: int, action: str = Form(...),
-                  db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+                  db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     if action == "toggle":
         db.execute("UPDATE schedules SET enabled=1-enabled WHERE id=?", (sid,))
     elif action == "delete":
@@ -721,13 +723,15 @@ def edit_schedule(sid: int, action: str = Form(...),
 
 # --------------------------------------------------------------------- admin
 @router.get("/admin")
-def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
-    users = db.execute("SELECT * FROM users ORDER BY created").fetchall()
+def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.require_any_admin)):
+    users = db.execute("SELECT * FROM users ORDER BY created").fetchall() \
+        if auth.can(user, "users") else []
     return render_page(request, db, "admin.html", user,
-                       users=[dict(u) for u in users],
+                       users=[dict(u) | {"perm_set": auth.perms_of(u)} for u in users],
                        settings=config.all_settings(db),
                        watch=status_watch(db),
                        tunnel=cloudflare.tunnel.state,
+                       via_tunnel=_via_tunnel(request),
                        access_enabled=cloudflare.access_enabled(db),
                        update=maint.update_status(),
                        backup=dict(maint.status),
@@ -736,19 +740,19 @@ def admin_page(request: Request, db=Depends(dbm.get_db), user=Depends(auth.requi
 
 
 @router.get("/admin/logs")
-def admin_logs(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def admin_logs(db=Depends(dbm.get_db), user=Depends(auth.require("logs"))):
     from . import logbuf
     return JSONResponse({"logs": logbuf.recent(), "level": logbuf.current_level()})
 
 
 @router.get("/admin/logs/files")
-def admin_log_files(user=Depends(auth.require_admin)):
+def admin_log_files(user=Depends(auth.require("logs"))):
     from . import logbuf
     return JSONResponse({"files": logbuf.files()})
 
 
 @router.get("/admin/logs/download/all")
-def admin_logs_zip(user=Depends(auth.require_admin)):
+def admin_logs_zip(user=Depends(auth.require("logs"))):
     from . import logbuf
     from fastapi.responses import Response
     stamp = __import__("time").strftime("%Y%m%d-%H%M%S")
@@ -757,7 +761,7 @@ def admin_logs_zip(user=Depends(auth.require_admin)):
 
 
 @router.get("/admin/logs/download/{name}")
-def admin_log_download(name: str, user=Depends(auth.require_admin)):
+def admin_log_download(name: str, user=Depends(auth.require("logs"))):
     from . import logbuf
     path = logbuf.LOG_DIR / Path(name).name
     if not (name.startswith("framevalet.log") and path.is_file()):
@@ -767,7 +771,7 @@ def admin_log_download(name: str, user=Depends(auth.require_admin)):
 
 @router.post("/admin/settings")
 def save_settings(request: Request, db=Depends(dbm.get_db),
-                  user=Depends(auth.require_admin),
+                  user=Depends(auth.require("settings")),
                   key: str = Form(...), value: str = Form(""), clear: str = Form("")):
     if key not in config.SETTINGS:
         raise HTTPException(400, "unknown setting")
@@ -779,6 +783,8 @@ def save_settings(request: Request, db=Depends(dbm.get_db),
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     if key == "cf_tunnel_token" and cloudflare.tunnel.state["wanted"]:
+        if _via_tunnel(request):
+            raise HTTPException(400, "you are connected through the tunnel; change its token from the LAN")
         cloudflare.tunnel.stop() if not value else cloudflare.tunnel.restart(value)
     if key == "cf_access_team":
         cloudflare._jwks.clear()
@@ -789,9 +795,16 @@ def save_settings(request: Request, db=Depends(dbm.get_db),
     return RedirectResponse("/admin", 303)
 
 
+def _via_tunnel(request: Request) -> bool:
+    """True when this request arrived through cloudflared (it stamps CF-Connecting-IP)."""
+    return "cf-connecting-ip" in request.headers
+
+
 @router.post("/admin/tunnel")
-def tunnel_control(action: str = Form(...), db=Depends(dbm.get_db),
-                   user=Depends(auth.require_admin)):
+def tunnel_control(request: Request, action: str = Form(...), db=Depends(dbm.get_db),
+                   user=Depends(auth.require("settings"))):
+    if action == "stop" and _via_tunnel(request):
+        raise HTTPException(400, "you are connected through the tunnel; stop it from the LAN instead")
     if action == "start":
         token = config.get(db, "cf_tunnel_token")
         if not token:
@@ -805,18 +818,18 @@ def tunnel_control(action: str = Form(...), db=Depends(dbm.get_db),
 
 
 @router.get("/admin/tunnel/status")
-def tunnel_status(user=Depends(auth.require_admin)):
+def tunnel_status(user=Depends(auth.require("settings"))):
     return JSONResponse(cloudflare.tunnel.state)
 
 
 # --------------------------------------------------------------- maintenance
 @router.get("/admin/update/status")
-def update_status(refresh: bool = False, user=Depends(auth.require_admin)):
+def update_status(refresh: bool = False, user=Depends(auth.require("settings"))):
     return JSONResponse(maint.update_status(refresh=refresh))
 
 
 @router.post("/admin/update")
-def start_update(user=Depends(auth.require_admin)):
+def start_update(user=Depends(auth.require("settings"))):
     try:
         maint.start_update()
     except Exception as e:
@@ -825,7 +838,7 @@ def start_update(user=Depends(auth.require_admin)):
 
 
 @router.post("/admin/rollback")
-def rollback_app(user=Depends(auth.require_admin)):
+def rollback_app(user=Depends(auth.require("settings"))):
     try:
         maint.rollback()
     except Exception as e:
@@ -834,13 +847,13 @@ def rollback_app(user=Depends(auth.require_admin)):
 
 
 @router.post("/admin/restart")
-def restart_app(user=Depends(auth.require_admin)):
+def restart_app(user=Depends(auth.require("settings"))):
     maint.restart()
     return JSONResponse({"ok": True})
 
 
 @router.post("/admin/backup")
-def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require("settings"))):
     try:
         out = maint.make_backup(config.get(db, "backup_passphrase"))
     except Exception as e:
@@ -849,7 +862,7 @@ def backup_now(db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
 
 
 @router.get("/admin/backup/{name}")
-def download_backup(name: str, user=Depends(auth.require_admin)):
+def download_backup(name: str, user=Depends(auth.require("settings"))):
     path = maint.BACKUP_DIR / Path(name).name
     if not (name.startswith("framevalet-") and (name.endswith(".tar.gz") or name.endswith(".tar.gz.enc"))
             and path.is_file()):
@@ -859,7 +872,7 @@ def download_backup(name: str, user=Depends(auth.require_admin)):
 
 @router.post("/admin/restore")
 async def restore(file: UploadFile = File(...), passphrase: str = Form(""),
-                  db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+                  db=Depends(dbm.get_db), user=Depends(auth.require("settings"))):
     data = await file.read(150_000_001)
     if len(data) > 150_000_000:
         raise HTTPException(413, "backup archive too large")
@@ -873,7 +886,7 @@ async def restore(file: UploadFile = File(...), passphrase: str = Form(""),
 
 @router.post("/admin/branding-logo")
 async def branding_logo(file: UploadFile = File(...), db=Depends(dbm.get_db),
-                        user=Depends(auth.require_admin)):
+                        user=Depends(auth.require("settings"))):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in (".png", ".jpg", ".jpeg", ".webp"):
         raise HTTPException(400, "logo must be png/jpg/webp")
@@ -885,14 +898,15 @@ async def branding_logo(file: UploadFile = File(...), db=Depends(dbm.get_db),
 
 @router.post("/admin/users")
 def add_user(username: str = Form(...), password: str = Form(...),
-             role: str = Form("member"), can_upload: bool = Form(False),
-             can_delete_any: bool = Form(False),
-             db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+             role: str = Form("member"), perms: list[str] = Form([]),
+             db=Depends(dbm.get_db), user=Depends(auth.require("users"))):
     if len(password) < 8:
         raise HTTPException(400, "password must be 8+ characters")
+    if role == "admin" and user["role"] != "admin":
+        raise HTTPException(403, "only an admin can create admins")
     try:
         auth.create_user(db, username, password, role="admin" if role == "admin" else "member",
-                         can_upload=can_upload, can_delete_any=can_delete_any)
+                         perms=perms)
     except Exception as e:
         raise HTTPException(400, f"could not create user: {e}") from e
     return RedirectResponse("/admin", 303)
@@ -900,7 +914,8 @@ def add_user(username: str = Form(...), password: str = Form(...),
 
 @router.post("/admin/users/{uid}")
 def edit_user(uid: int, action: str = Form(...), password: str = Form(""),
-              db=Depends(dbm.get_db), user=Depends(auth.require_admin)):
+              role: str = Form(""), perms: list[str] = Form([]),
+              db=Depends(dbm.get_db), user=Depends(auth.require("users"))):
     target = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     if not target:
         raise HTTPException(404)
@@ -910,19 +925,19 @@ def edit_user(uid: int, action: str = Form(...), password: str = Form(""),
         if target["role"] == "admin" and admins <= 1 and not target["disabled"]:
             raise HTTPException(400, "cannot disable the last admin")
         db.execute("UPDATE users SET disabled=1-disabled WHERE id=?", (uid,))
-    elif action == "toggle_role":
-        if target["role"] == "admin":
-            if admins <= 1:
+    elif action == "perms":
+        want_admin = role == "admin"
+        if want_admin != (target["role"] == "admin"):
+            if user["role"] != "admin":
+                raise HTTPException(403, "only an admin can change roles")
+            if not want_admin and admins <= 1:
                 raise HTTPException(400, "cannot demote the last admin")
-            if target["id"] == user["id"]:
+            if not want_admin and target["id"] == user["id"]:
                 raise HTTPException(400, "demote yourself from another admin account")
-            db.execute("UPDATE users SET role='member' WHERE id=?", (uid,))
-        else:
-            db.execute("UPDATE users SET role='admin', can_delete_any=1 WHERE id=?", (uid,))
-    elif action == "toggle_upload":
-        db.execute("UPDATE users SET can_upload=1-can_upload WHERE id=?", (uid,))
-    elif action == "toggle_delete_any":
-        db.execute("UPDATE users SET can_delete_any=1-can_delete_any WHERE id=?", (uid,))
+            db.execute("UPDATE users SET role=? WHERE id=?", ("admin" if want_admin else "member", uid))
+        auth.set_perms(db, uid, perms)
+        if target["id"] == user["id"] and not want_admin and "users" not in perms:
+            pass   # allowed: you can lock yourself out of user management, admins can fix it
     elif action == "set_password":
         if len(password) < 8:
             raise HTTPException(400, "password must be 8+ characters")
