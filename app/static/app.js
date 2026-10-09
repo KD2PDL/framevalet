@@ -591,6 +591,7 @@
     const matteApply = $('#matteApply');
     const btnCrop = $('#ovCrop');
     const btnDelete = $('#ovDelete');
+    const btnDeleteTop = $('#ovDeleteTop');
 
     function buildTvRows(card) {
       tvRows.innerHTML = '';
@@ -726,6 +727,7 @@
       else { imgwrap.classList.remove('matted'); if (matteNote) matteNote.hidden = true; }
       btnCrop.hidden = !croppable;
       btnDelete.hidden = d.candelete !== '1';
+      if (btnDeleteTop) btnDeleteTop.hidden = d.candelete !== '1';
       overlay.hidden = false;
       document.body.style.overflow = 'hidden';
       fitOverlay();
@@ -896,6 +898,7 @@
       openCropEditor(currentCard, crop);
     });
 
+    if (btnDeleteTop) btnDeleteTop.addEventListener('click', () => btnDelete.click());
     btnDelete.addEventListener('click', async () => {
       if (!currentCard) return;
       if (!confirm(`Delete "${currentCard.dataset.filename}"? It will also be removed from the TVs.`)) return;

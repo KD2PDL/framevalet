@@ -790,3 +790,4 @@ html, body { touch-action: manipulation; }
   input[type="text"], input[type="password"], input[type="number"], input[type="email"],
   input[type="search"], input[type="date"], input[type="time"], select, textarea { font-size: 16px; }
 }
+.ov-delete-top { position: absolute; left: .6rem; bottom: .6rem; z-index: 2; min-height: 44px; }
