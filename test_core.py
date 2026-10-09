@@ -399,3 +399,18 @@ class _R:
     def __init__(self, h): self.headers = h
 assert _routes._via_tunnel(_R({"cf-connecting-ip": "1.2.3.4"})) and not _routes._via_tunnel(_R({}))
 print("perms: ok")
+
+
+# --- discovery fallback: subnet sweep finds an open 8001 and skips closed ones
+import socket as _sock
+import ipaddress
+from app import discovery
+srv = _sock.socket(); srv.bind(("127.0.0.1", 8001)); srv.listen(1)
+try:
+    assert discovery._port_open("127.0.0.1") == "127.0.0.1"
+finally:
+    srv.close()
+assert discovery._port_open("127.0.0.1") is None            # closed now
+assert discovery.sweep(ipaddress.ip_network("127.0.0.0/30")) == set()
+assert discovery.sweep(ipaddress.ip_network("10.0.0.0/8")) == set()   # too big: refused
+print("discovery: ok")

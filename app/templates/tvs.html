@@ -163,7 +163,7 @@
   <div class="scan-block">
     <button type="button" class="btn" id="scanBtn">Scan network</button>
     <div class="scan-results" id="scanResults" hidden></div>
-    <p class="muted" id="scanEmpty" hidden>Nothing found. SSDP can't cross Docker bridge networking or VLANs — add the TV by IP below.</p>
+    <p class="muted" id="scanEmpty" hidden>Nothing found on this subnet. Make sure the TV is on (Art Mode counts) and on the same network as this box, not a guest or separate Wi-Fi. If it's on another VLAN, add it by IP below: on the TV, Settings › General › Network › Network Status shows its address.</p>
   </div>
   <form method="post" action="/tvs" class="tv-edit" id="addTvForm">
     <label>Name <input type="text" name="name" placeholder="Living room" required></label>
