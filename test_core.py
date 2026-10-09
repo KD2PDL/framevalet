@@ -557,3 +557,23 @@ with TestClient(_app) as c:
     r = c.post(f"/tvs/{tvrow['id']}/attach/MY_NOPE", files={"file": ("x.jpg", bb.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
     assert r.status_code == 400, r.text
 print("attach route: ok")
+
+
+# --- schedules never fire while the TV is being watched (Art Mode off)
+db.execute("INSERT INTO schedules(tv_id, mode, interval_minutes) VALUES(?, 'sequential', 1)", (tvrow["id"],)); db.commit()
+class _SchedSvc:
+    def __init__(self, art): self.art = art; self.selected = []
+    def art_mode_on(self): return self.art
+    def select(self, cid): self.selected.append(cid)
+watching = _SchedSvc(False)
+_w._fire_schedules(db, tvrow, watching)
+assert watching.selected == [], watching.selected
+assert db.execute("SELECT cursor, last_fired FROM schedules WHERE tv_id=?", (tvrow["id"],)).fetchone()["last_fired"] == 0
+unknown = _SchedSvc(None)
+_w._fire_schedules(db, tvrow, unknown)
+assert unknown.selected == []
+art = _SchedSvc(True)
+_w._fire_schedules(db, tvrow, art)
+assert len(art.selected) == 1 and art.selected[0].startswith("MY_"), art.selected
+assert db.execute("SELECT last_fired FROM schedules WHERE tv_id=?", (tvrow["id"],)).fetchone()["last_fired"] > 0
+print("schedule guard: ok")

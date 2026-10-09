@@ -209,6 +209,14 @@ class TVService:
         grab("slideshow", lambda a: a.get_slideshow_status())
         return out
 
+    def art_mode_on(self) -> bool | None:
+        """True/False from the TV; None when it won't say (treat as not safe)."""
+        try:
+            v = self._call(lambda a: a.get_artmode(), attempts=1, deadline=15)
+        except Exception:
+            return None
+        return str(v).lower() in ("on", "true", "1")
+
     def set_artmode(self, on: bool):
         self._call(lambda a: a.set_artmode(on), attempts=1)
 

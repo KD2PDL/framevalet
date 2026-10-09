@@ -197,10 +197,24 @@ def _reconcile_tv(db, tv, svc: TVService):
 # ---------------------------------------------------------------- scheduler
 def _fire_schedules(db, tv, svc: TVService):
     now = dt.datetime.now()
-    for s in db.execute("SELECT * FROM schedules WHERE tv_id=? AND enabled=1",
-                        (tv["id"],)).fetchall():
-        if time.time() - s["last_fired"] < s["interval_minutes"] * 60:
-            continue
+    due = [s for s in db.execute("SELECT * FROM schedules WHERE tv_id=? AND enabled=1",
+                                 (tv["id"],)).fetchall()
+           if time.time() - s["last_fired"] >= s["interval_minutes"] * 60]
+    if not due:
+        return
+    # Selecting an image switches the TV to Art Mode, which would cut off
+    # whatever someone is watching. Only rotate while the TV is already in
+    # Art Mode; otherwise wait for the next pass without advancing anything.
+    art = svc.art_mode_on()
+    if not art:
+        st = tv_status(tv["id"])
+        if st.get("art_skip") != art:
+            log.info("TV %s: schedule skipped, TV is %s", tv["id"],
+                     "in use (Art Mode off)" if art is False else "not reporting Art Mode")
+        st["art_skip"] = art
+        return
+    tv_status(tv["id"]).pop("art_skip", None)
+    for s in due:
         if str(now.weekday()) not in s["days"]:
             continue
         if s["time_start"] and s["time_end"]:
