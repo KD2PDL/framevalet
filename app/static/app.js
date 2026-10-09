@@ -739,7 +739,10 @@
     };
     function fitOverlay() {
       if (overlay.hidden || !vv || window.innerWidth > 600) { overlay.style.cssText = ''; return; }
-      if (typing()) return;            // keyboard open: the viewport shrank, the panel must not
+      // Keyboard open (viewport much shorter than the window while a field has
+      // focus): keep the panel size. Once the viewport grows back, re-fit even
+      // if the field kept focus, which iOS does when the keyboard is dismissed.
+      if (typing() && vv.height < window.innerHeight * 0.75) return;
       overlay.style.top = `${vv.offsetTop}px`;
       overlay.style.left = `${vv.offsetLeft}px`;
       overlay.style.width = `${vv.width}px`;
