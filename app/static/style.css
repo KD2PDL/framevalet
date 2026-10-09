@@ -354,7 +354,7 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
   .overlay-panel { max-width: none; height: 100%; max-height: none; border-radius: 0; }
   .overlay-close { top: calc(.4rem + env(safe-area-inset-top, 0px)); }
   .overlay-imgwrap { padding-top: env(safe-area-inset-top, 0px); }
-  .overlay-imgwrap img { max-height: 44vh; max-height: 44dvh; }
+  .overlay-imgwrap, .overlay-imgwrap img { max-height: 40vh; max-height: 40dvh; }
 }
 .overlay-backdrop { position: absolute; inset: 0; background: rgba(26, 22, 15, .58); animation: fade-in .2s var(--ease-out) both; }
 .overlay-panel {
@@ -381,8 +381,9 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 /* flex: none so the stage never shrinks under the panel body (the image would
    spill out of it); the body scrolls instead. */
 .overlay-imgwrap { position: relative; background: #18140d; display: flex; align-items: center; justify-content: center; min-height: 200px; flex: none; overflow: hidden; }
-.overlay-imgwrap img { max-height: 56vh; width: auto; max-width: 100%; object-fit: contain; }
-.overlay-imgwrap.matted { aspect-ratio: 16 / 9; background: var(--mat-color, #e0dbd2); min-height: 0; overflow: hidden; flex: none; }
+.overlay-imgwrap { max-height: 40vh; max-height: 40dvh; }                /* options always get 60% */
+.overlay-imgwrap img { max-height: 40vh; max-height: 40dvh; width: auto; max-width: 100%; object-fit: contain; }
+.overlay-imgwrap.matted { aspect-ratio: 16 / 9; width: 100%; max-width: calc(40vh * 16 / 9); max-width: calc(40dvh * 16 / 9); margin: 0 auto; background: var(--mat-color, #e0dbd2); min-height: 0; overflow: hidden; flex: none; }
 /* Absolute inside the 16:9 stage: percentage sizes resolve against the stage even
    though its height comes from aspect-ratio, so tall photos can't overflow it. */
 .overlay-imgwrap.matted img {
