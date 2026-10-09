@@ -33,7 +33,18 @@ from . import config
 
 log = logging.getLogger("framevalet.maint")
 
-REPO = Path(__file__).resolve().parent.parent
+def _find_repo() -> Path:
+    """The git checkout to update. Under the installer the package is pip-installed
+    into the venv, so __file__ points at site-packages; the checkout is the
+    service's working directory (/opt/framevalet). FRAMEVALET_REPO overrides."""
+    for c in (os.environ.get("FRAMEVALET_REPO"), Path(__file__).resolve().parent.parent,
+              Path.cwd(), Path("/opt/framevalet")):
+        if c and (Path(c) / ".git").exists() and (Path(c) / "pyproject.toml").exists():
+            return Path(c)
+    return Path(__file__).resolve().parent.parent
+
+
+REPO = _find_repo()
 BACKUP_DIR = config.DATA_DIR / "backups"
 PENDING_DIR = config.DATA_DIR / "restore-pending"
 PREVIOUS_FILE = config.DATA_DIR / "update-previous"   # sha we were on before the last update
