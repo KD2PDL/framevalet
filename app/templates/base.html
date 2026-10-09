@@ -27,6 +27,9 @@
     t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
   }
   document.documentElement.setAttribute('data-theme', t);
+  if (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) {
+    document.documentElement.classList.add('standalone');   // home-screen app: status bar overlays the page
+  }
 })();</script>
 <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
 <style>:root { --accent: {{ brand.accent }}; }</style>
