@@ -131,7 +131,7 @@
     </div>
     <div class="overlay-body">
       <div class="overlay-meta">
-        <input type="text" id="ovName" class="ov-title-input" aria-label="Photo title" maxlength="120">
+        <input type="text" id="ovName" class="ov-title-input" aria-label="Photo caption" placeholder="Caption" maxlength="120" autocomplete="off" autocorrect="on" spellcheck="true" data-lpignore="true">
         <div class="ov-date-row">
           <span class="muted" id="ovTaken"></span>
           <button type="button" class="btn btn-ghost btn-sm ov-date-edit" id="ovDateEdit" aria-label="Edit date">&#9998;</button>
@@ -147,7 +147,7 @@
       <div class="ov-tags">
         <label for="ovTags">Tags</label>
         <div class="ov-tags-row">
-          <input type="text" id="ovTags" placeholder="comma, separated">
+          <input type="text" id="ovTags" placeholder="comma, separated" autocomplete="off">
           <button type="button" class="btn btn-sm" id="ovTagsSave">Save</button>
         </div>
       </div>

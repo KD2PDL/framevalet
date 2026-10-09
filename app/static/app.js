@@ -733,8 +733,13 @@
     // iOS Safari: size the overlay to the *visible* viewport (address bar and
     // toolbar come and go; 100vh/100dvh don't track it reliably on every version).
     const vv = window.visualViewport;
+    const typing = () => {
+      const a = document.activeElement;
+      return a && overlay.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+    };
     function fitOverlay() {
       if (overlay.hidden || !vv || window.innerWidth > 600) { overlay.style.cssText = ''; return; }
+      if (typing()) return;            // keyboard open: the viewport shrank, the panel must not
       overlay.style.top = `${vv.offsetTop}px`;
       overlay.style.left = `${vv.offsetLeft}px`;
       overlay.style.width = `${vv.width}px`;
@@ -743,6 +748,7 @@
       overlay.style.bottom = 'auto';
     }
     if (vv) { vv.addEventListener('resize', fitOverlay); vv.addEventListener('scroll', fitOverlay); }
+    overlay.addEventListener('focusout', () => setTimeout(fitOverlay, 250));   // keyboard closed: re-fit
     window.addEventListener('orientationchange', () => setTimeout(fitOverlay, 300));
     let closing = false;
     function closeOverlay() {
