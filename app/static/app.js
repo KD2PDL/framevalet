@@ -992,11 +992,28 @@
       syncNorm();
     }));
 
+    const TV_ASPECT = 16 / 9;
+    function chipValue(chip) {
+      if (chip.dataset.aspect === 'original') return cimg.naturalWidth / cimg.naturalHeight || null;
+      return chip.dataset.aspect ? parseFloat(chip.dataset.aspect) : null;
+    }
+    function selectChip(chip) {
+      aspects.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
+      aspect = chip ? chipValue(chip) : null;
+    }
+    // Pick the chip that matches an existing crop's shape (else Free).
+    function chipForRatio(ratio) {
+      let best = null;
+      aspects.querySelectorAll('[data-aspect]').forEach((c) => {
+        const v = chipValue(c);
+        if (v && Math.abs(v - ratio) / v < 0.02 && !best) best = c;
+      });
+      return best || aspects.querySelector('[data-aspect=""]');
+    }
     aspects.addEventListener('click', (e) => {
       const chip = e.target.closest('[data-aspect]');
       if (!chip) return;
-      aspects.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
-      aspect = chip.dataset.aspect ? parseFloat(chip.dataset.aspect) : null;
+      selectChip(chip);
       reshapeToAspect();
     });
 
@@ -1043,7 +1060,7 @@
         const r = await postJSON(`/photo/${cropCard.dataset.id}/rotate`, { deg });
         cropCard.dataset.edits = JSON.stringify(r.edits || '');
         norm = [0, 0, 1, 1];                       // crop was cleared server-side
-        cimg.onload = layout;
+        cimg.onload = () => { layout(); selectChip(aspects.querySelector('[data-aspect="1.7778"]')); reshapeToAspect(); };
         cimg.src = `/photo/${cropCard.dataset.id}/original?rot=${r.rotate}`;
         if (window.__fvRefreshPreview) window.__fvRefreshPreview(cropCard);
         toast('Rotated. Crop again if needed.', 'success');
@@ -1058,17 +1075,26 @@
 
     openCropEditor = (card, existingCrop) => {
       cropCard = card;
-      norm = (existingCrop && existingCrop.length === 4) ? [...existingCrop] : [0, 0, 1, 1];
-      aspect = null;
-      aspects.querySelectorAll('.chip').forEach((c) =>
-        c.classList.toggle('active', c.dataset.aspect === ''));
+      const hasCrop = existingCrop && existingCrop.length === 4;
+      norm = hasCrop ? [...existingCrop] : [0, 0, 1, 1];
       cropEd.hidden = false;
       document.body.style.overflow = 'hidden';
       let rot = 0;
       try { rot = JSON.parse(JSON.parse(card.dataset.edits || '""') || '{}').rotate || 0; } catch (_) { rot = 0; }
       const src = `/photo/${card.dataset.id}/original?rot=${rot}`;
-      if (cimg.src.endsWith(src) && cimg.naturalWidth) { layout(); return; }
-      cimg.onload = layout;
+      // New crop: suggest the TV's shape (largest centered 16:9). Existing crop:
+      // keep it and light up the matching chip, so Original/Free stay possible.
+      const ready = () => {
+        layout();
+        if (hasCrop) {
+          selectChip(chipForRatio((norm[2] * cimg.naturalWidth) / (norm[3] * cimg.naturalHeight)));
+        } else {
+          selectChip(aspects.querySelector('[data-aspect="1.7778"]'));
+          reshapeToAspect();
+        }
+      };
+      if (cimg.src.endsWith(src) && cimg.naturalWidth) { ready(); return; }
+      cimg.onload = ready;
       cimg.src = src;
     };
     cropEd._close = closeCrop;
