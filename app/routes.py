@@ -53,6 +53,38 @@ def _tv(db, tv_id: int):
     return tv
 
 
+# ------------------------------------------------------------ share/manifest
+@router.get("/share")
+def share_page(request: Request, db=Depends(dbm.get_db)):
+    """Public landing with the link-preview tags (iMessage, WhatsApp, Slack).
+    Everything else sits behind Access/login, whose login page has no preview,
+    so this path is the one to share. Serves no library data."""
+    base = f"{request.url.scheme}://{request.url.netloc}"
+    return templates.TemplateResponse(request, "share.html", {
+        "base": base, "brand": {"name": config.get(db, "brand_name"),
+                                "accent": config.get(db, "brand_accent")}})
+
+
+@router.get("/share/og.png")
+def share_image():
+    return FileResponse(Path(__file__).parent / "static" / "og.png", media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/manifest.webmanifest")
+def manifest(db=Depends(dbm.get_db)):
+    name = config.get(db, "brand_name")
+    return JSONResponse({
+        "name": name, "short_name": name[:12], "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#18140d", "theme_color": "#18140d",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }, media_type="application/manifest+json")
+
+
 # ---------------------------------------------------------------- setup/login
 @router.get("/setup")
 def setup_page(request: Request, db=Depends(dbm.get_db)):
