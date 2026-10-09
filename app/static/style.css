@@ -369,9 +369,11 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .overlay-close:hover { background: var(--card); }
 .overlay-close:active { transform: scale(.94); }
 .overlay-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.overlay-imgwrap { position: relative; background: #18140d; display: flex; align-items: center; justify-content: center; min-height: 200px; }
-.overlay-imgwrap img { max-height: 62vh; width: auto; max-width: 100%; object-fit: contain; }
-.overlay-imgwrap.matted { aspect-ratio: 16 / 9; background: var(--mat-color, #e0dbd2); min-height: 0; overflow: hidden; }
+/* flex: none so the stage never shrinks under the panel body (the image would
+   spill out of it); the body scrolls instead. */
+.overlay-imgwrap { position: relative; background: #18140d; display: flex; align-items: center; justify-content: center; min-height: 200px; flex: none; overflow: hidden; }
+.overlay-imgwrap img { max-height: 56vh; width: auto; max-width: 100%; object-fit: contain; }
+.overlay-imgwrap.matted { aspect-ratio: 16 / 9; background: var(--mat-color, #e0dbd2); min-height: 0; overflow: hidden; flex: none; }
 /* Absolute inside the 16:9 stage: percentage sizes resolve against the stage even
    though its height comes from aspect-ratio, so tall photos can't overflow it. */
 .overlay-imgwrap.matted img {
