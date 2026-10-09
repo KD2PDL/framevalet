@@ -116,25 +116,6 @@
           </td>
         </tr>
         {% endfor %}
-                <button class="btn btn-sm btn-primary">Save access</button>
-              </form>
-            </details>
-            <form method="post" action="/admin/users/{{ u.id }}">
-              <input type="hidden" name="action" value="toggle_disabled">
-              <button class="btn btn-sm">{{ 'Enable' if u.disabled else 'Disable' }}</button>
-            </form>
-            <form method="post" action="/admin/users/{{ u.id }}" class="inline-pw">
-              <input type="hidden" name="action" value="set_password">
-              <input type="password" name="password" placeholder="{{ 'Enable local login' if u.sso else 'New password' }}" minlength="8" required>
-              <button class="btn btn-sm">Set</button>
-            </form>
-            <form method="post" action="/admin/users/{{ u.id }}" data-confirm="Delete user {{ u.username }}? This cannot be undone.">
-              <input type="hidden" name="action" value="delete">
-              <button class="btn btn-sm btn-danger">Delete</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
       </tbody>
     </table>
   </div>
