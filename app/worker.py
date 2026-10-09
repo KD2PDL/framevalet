@@ -30,7 +30,17 @@ status = {          # dashboard state
                "healthy": None},   # None=never run, True=last sync ok, False=last failed
 }
 import_state = {"running": False, "tv_id": None, "done": 0, "total": 0, "error": "",
-                "thumbs": 0, "phase": ""}
+                "thumbs": 0, "thumbs_total": 0, "phase": ""}
+
+
+def import_text(st=None) -> str:
+    """One line for the UI: what the import is doing right now."""
+    st = st or import_state
+    if not st["running"]:
+        return ""
+    if st["phase"] == "thumbnails":
+        return f"fetching thumbnails {st['thumbs']}/{st['thumbs_total']}"
+    return f"adopting photos {st['done']}/{st['total']}"
 
 _wakeup = asyncio.Event()
 _reconciled: dict[int, float] = {}
@@ -418,7 +428,8 @@ async def _import_from_tv(tv_id: int):
     short timeout and gives up after three straight failures, because some
     firmware never answers thumbnail requests and we won't hang on 1,200 of
     them. Photos the reconciler recorded as 'external' are upgraded in place."""
-    import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="", thumbs=0, phase="photos")
+    import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="", thumbs=0,
+                        thumbs_total=0, phase="photos")
     t0 = time.time()
 
     def _run():
@@ -470,6 +481,7 @@ async def _import_from_tv(tv_id: int):
                 "SELECT p.id, tp.content_id FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
                 "WHERE tp.tv_id=? AND tp.content_id IS NOT NULL AND p.source='import' "
                 "AND (p.thumb_path IS NULL OR p.thumb_path='')", (tv_id,)).fetchall()
+            import_state["thumbs_total"] = len(need)
             svc.timeout = 12
             fails, first_err, failed_total = 0, "", 0
             method = None       # decided on the first photo: "single" or "batch"
@@ -519,10 +531,10 @@ async def _import_from_tv(tv_id: int):
                         import_state["error"] = f"thumbnails unavailable: {first_err}"
                         break
                 if n % 10 == 0:
-                    ws.broadcast({"type": "import", **import_state})
+                    ws.broadcast({"type": "import", **import_state, "text": import_text()})
                 if n % 100 == 0:
                     log.info("import from TV %s: thumbnails %d/%d (%d failed)", tv_id, n, len(need), failed_total)
-            ws.broadcast({"type": "import", **import_state})
+            ws.broadcast({"type": "import", **import_state, "text": import_text()})
             log.info("import from TV %s finished in %.0fs: %d adopted, %d thumbnails fetched, %d failed",
                      tv_id, time.time() - t0, len(todo), import_state["thumbs"], failed_total)
         finally:

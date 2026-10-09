@@ -4,7 +4,7 @@
   <h1>TVs</h1>
   <p class="muted">Every Frame this library pushes to.</p>
   {% if import_state.running %}
-  <p class="import-line">Importing from TV: {{ import_state.done }}/{{ import_state.total }}</p>
+  <p class="import-line">Importing from TV: {{ import_text(import_state) }}</p>
   {% endif %}
 </div>
 

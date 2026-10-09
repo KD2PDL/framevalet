@@ -537,3 +537,10 @@ try:
 except ValueError:
     pass
 print("rotate+attach: ok")
+
+
+# --- import status text follows the phase
+assert _w.import_text({"running": False}) == ""
+assert _w.import_text({"running": True, "phase": "photos", "done": 3, "total": 9}) == "adopting photos 3/9"
+assert _w.import_text({"running": True, "phase": "thumbnails", "thumbs": 554, "thumbs_total": 1211}) == "fetching thumbnails 554/1211"
+print("status text: ok")

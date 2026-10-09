@@ -1205,7 +1205,7 @@
       if (grid && s.counts) renderCounts(s.counts);
       if (importLine && s.import) {
         importLine.hidden = !s.import.running;
-        if (importProgress) importProgress.textContent = `${s.import.done}/${s.import.total}`;
+        if (importProgress) importProgress.textContent = s.import.text || `${s.import.done}/${s.import.total}`;
       }
     } catch (_) { /* offline; try again next tick */ }
   }
@@ -1267,7 +1267,7 @@
       case 'import':
         if (importLine) {
           importLine.hidden = !msg.running;
-          if (importProgress) importProgress.textContent = `${msg.done}/${msg.total}`;
+          if (importProgress) importProgress.textContent = msg.text || `${msg.done}/${msg.total}`;
         }
         if (msg.error) toast(`Import: ${msg.error}`);
         break;

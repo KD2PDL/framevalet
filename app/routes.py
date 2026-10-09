@@ -19,6 +19,7 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["can"] = auth.can
 templates.env.globals["PERMS"] = auth.PERMS
 templates.env.globals["PERM_HINTS"] = auth.PERM_HINTS
+templates.env.globals["import_text"] = worker.import_text
 
 
 def render_page(request, db, name, user=None, **ctx):
@@ -548,7 +549,7 @@ def api_status(db=Depends(dbm.get_db), user=Depends(auth.current_user)):
               for s in ("queued", "on_tv", "failed")}
     return {"tvs": {t["id"]: worker.tv_status(t["id"])
                     for t in db.execute("SELECT id FROM tvs")},
-            "counts": counts, "import": dict(worker.import_state),
+            "counts": counts, "import": dict(worker.import_state) | {"text": worker.import_text()},
             "watch": status_watch(db)}
 
 
