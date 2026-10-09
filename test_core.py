@@ -549,9 +549,10 @@ print("status text: ok")
 # --- attach route end-to-end over HTTP (catches route-level import/wiring errors)
 from fastapi.testclient import TestClient
 from app.main import app as _app
+b4 = _io.BytesIO(); Image.new("RGB", (300, 300), (0, 90, 200)).save(b4, "JPEG")
 with TestClient(_app) as c:
     c.post("/login", data={"username": "alice", "password": "s3cure-pass-1"}, headers={"Origin": "http://testserver"})
-    r = c.post(f"/tvs/{tvrow['id']}/attach/MY_F0004", files={"file": ("x.jpg", bb.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
+    r = c.post(f"/tvs/{tvrow['id']}/attach/MY_F0004", files={"file": ("x.jpg", b4.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
     assert r.status_code == 200 and r.json()["ok"], r.text
     r = c.post(f"/tvs/{tvrow['id']}/attach/MY_NOPE", files={"file": ("x.jpg", bb.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
     assert r.status_code == 400, r.text
