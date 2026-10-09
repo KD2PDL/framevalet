@@ -29,7 +29,8 @@ status = {          # dashboard state
     "rclone": {"last_sync": 0.0, "last_error": "", "available": bool(shutil.which("rclone")),
                "healthy": None},   # None=never run, True=last sync ok, False=last failed
 }
-import_state = {"running": False, "tv_id": None, "done": 0, "total": 0, "error": ""}
+import_state = {"running": False, "tv_id": None, "done": 0, "total": 0, "error": "",
+                "thumbs": 0, "phase": ""}
 
 _wakeup = asyncio.Event()
 _reconciled: dict[int, float] = {}
@@ -375,10 +376,12 @@ def start_import(tv_id: int):
 
 
 async def _import_from_tv(tv_id: int):
-    """Adopt everything currently on a TV: per-TV manifest entries plus TV-side
-    thumbnails. Adopted photos are manageable but carry no original. Photos the
-    reconciler already recorded as 'external' are upgraded in place."""
-    import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="")
+    """Adopt everything currently on a TV. Phase 1 records every photo at once
+    (manageable immediately, no thumbnail). Phase 2 fetches thumbnails with a
+    short timeout and gives up after three straight failures, because some
+    firmware never answers thumbnail requests and we won't hang on 1,200 of
+    them. Photos the reconciler recorded as 'external' are upgraded in place."""
+    import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="", thumbs=0, phase="photos")
 
     def _run():
         db = dbm.connect()
@@ -398,39 +401,59 @@ async def _import_from_tv(tv_id: int):
                 (tv_id,))}
             todo = [x for cid, x in items.items() if cid not in managed]
             import_state["total"] = len(todo)
+            # phase 1: metadata, all at once
             for x in todo:
                 cid = x["content_id"]
-                thumb_path = None
-                data = svc.thumbnail(cid)
-                if data:
-                    thumb_path = config.THUMBS_DIR / f"tv{tv_id}_{cid}.jpg"
-                    try:
-                        pipeline.make_thumb_from_bytes(data, thumb_path)
-                    except Exception:
-                        thumb_path = None
                 if cid in external:                       # upgrade the reconciler's stub
                     db.execute(
-                        "UPDATE photos SET thumb_path=?, taken_date=COALESCE(?, taken_date), "
-                        "width=?, height=?, source='import' WHERE id=?",
-                        (str(thumb_path) if thumb_path else None, x.get("image_date"),
-                         x.get("width"), x.get("height"), external[cid]))
+                        "UPDATE photos SET taken_date=COALESCE(?, taken_date), width=?, height=?, "
+                        "source='import' WHERE id=?",
+                        (x.get("image_date"), x.get("width"), x.get("height"), external[cid]))
                 else:
                     cur = db.execute(
-                        "INSERT INTO photos(filename, thumb_path, taken_date, width, height, "
-                        "source, created) VALUES(?,?,?,?,?,?,?)",
-                        (cid, str(thumb_path) if thumb_path else None, x.get("image_date"),
-                         x.get("width"), x.get("height"), "import", dbm.now()))
+                        "INSERT INTO photos(filename, taken_date, width, height, source, created) "
+                        "VALUES(?,?,?,?,?,?)",
+                        (cid, x.get("image_date"), x.get("width"), x.get("height"), "import", dbm.now()))
                     db.execute(
                         "INSERT INTO tv_photos(tv_id, photo_id, content_id, status, matte) "
                         "VALUES(?,?,?,?,?)",
                         (tv_id, cur.lastrowid, cid, "on_tv", x.get("matte_id")))
-                db.commit()
                 import_state["done"] += 1
-                if import_state["done"] % 10 == 0 or import_state["done"] == import_state["total"]:
-                    ws.broadcast({"type": "import", **import_state})
+            db.commit()
             if todo:
                 ws.broadcast({"type": "counts_dirty"})
-                log.info("import from TV %s: %d adopted", tv_id, len(todo))
+                log.info("import from TV %s: %d photos adopted", tv_id, len(todo))
+            # phase 2: thumbnails for anything on this TV that lacks one
+            import_state["phase"] = "thumbnails"
+            need = db.execute(
+                "SELECT p.id, tp.content_id FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+                "WHERE tp.tv_id=? AND tp.content_id IS NOT NULL AND p.source='import' "
+                "AND (p.thumb_path IS NULL OR p.thumb_path='')", (tv_id,)).fetchall()
+            svc.timeout = 12
+            fails, first_err = 0, ""
+            for n, r in enumerate(need, 1):
+                try:
+                    data = svc._call(lambda a, c=r["content_id"]: a.get_thumbnail(c), attempts=1)
+                    if not data:
+                        raise TVError("empty thumbnail")
+                    thumb_path = config.THUMBS_DIR / f"tv{tv_id}_{r['content_id']}.jpg"
+                    pipeline.make_thumb_from_bytes(bytes(data), thumb_path)
+                    db.execute("UPDATE photos SET thumb_path=? WHERE id=?", (str(thumb_path), r["id"]))
+                    db.commit()
+                    import_state["thumbs"] += 1
+                    fails = 0
+                except Exception as e:
+                    fails += 1
+                    first_err = first_err or f"{type(e).__name__}: {str(e)[:160]}"
+                    svc.reset()
+                    if fails >= 3:
+                        log.warning("import from TV %s: thumbnails unavailable after %d tries (%s); "
+                                    "%d photos stay without thumbnails", tv_id, n, first_err, len(need) - n + fails)
+                        import_state["error"] = f"thumbnails unavailable: {first_err}"
+                        break
+                if n % 10 == 0:
+                    ws.broadcast({"type": "import", **import_state})
+            ws.broadcast({"type": "import", **import_state})
         finally:
             svc.reset()
             db.close()

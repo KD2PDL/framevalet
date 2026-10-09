@@ -433,28 +433,40 @@ svc.reset()
 print("pairing: ok")
 
 
-# --- import upgrades reconciler 'external' stubs instead of skipping them
+# --- import: phase 1 adopts everything at once; phase 2 thumbnails with a breaker
 import asyncio as _aio
 from app import worker as _w
 db.execute("INSERT INTO tvs(name, host, created) VALUES('t','192.0.2.9',?)", (dbm.now(),)); db.commit()
 tvid = db.execute("SELECT id FROM tvs WHERE host='192.0.2.9'").fetchone()["id"]
 cur = db.execute("INSERT INTO photos(filename, source, created) VALUES('MY_F0001','external',?)", (dbm.now(),))
 db.execute("INSERT INTO tv_photos(tv_id, photo_id, content_id, status) VALUES(?,?,'MY_F0001','on_tv')", (tvid, cur.lastrowid)); db.commit()
-class _FakeSvc:
-    def __init__(self, row): pass
-    def my_photos(self): return [{"content_id": "MY_F0001", "width": 10, "height": 5, "image_date": "2024:01:01 00:00:00"},
-                                 {"content_id": "MY_F0001"},                           # TV lists duplicates
-                                 {"content_id": "MY_F0002", "width": 8, "height": 4}]
-    def thumbnail(self, cid):
+class _FakeArt:
+    def __init__(self, ok): self.ok = ok
+    def get_thumbnail(self, cid):
+        if not self.ok: raise RuntimeError("firmware says no")
         b = _io.BytesIO(); Image.new("RGB", (40, 20), "red").save(b, "JPEG"); return b.getvalue()
+class _FakeSvc:
+    ok = True
+    def __init__(self, row): self.timeout = 30
+    def my_photos(self): return [{"content_id": "MY_F0001", "width": 10, "height": 5, "image_date": "2024:01:01 00:00:00"},
+                                 {"content_id": "MY_F0001"}, {"content_id": "MY_F0002", "width": 8, "height": 4},
+                                 {"content_id": "MY_F0003"}, {"content_id": "MY_F0004"}]
+    def _call(self, fn, attempts=1): return fn(_FakeArt(self.ok))
     def reset(self): pass
 _orig = _w.TVService; _w.TVService = _FakeSvc
 try:
     _aio.run(_w._import_from_tv(tvid))
+    st = dict(_w.import_state)
+    assert st["error"] == "" and st["total"] == 4 and st["done"] == 4 and st["thumbs"] == 4, st
+    rows = {r["filename"]: r for r in db.execute("SELECT p.* FROM photos p JOIN tv_photos tp ON tp.photo_id=p.id WHERE tp.tv_id=?", (tvid,))}
+    assert rows["MY_F0001"]["source"] == "import" and rows["MY_F0001"]["thumb_path"] and rows["MY_F0001"]["width"] == 10
+    assert len(rows) == 4
+    # breaker: a TV that never serves thumbnails still gets its photos adopted, quickly
+    db.execute("UPDATE photos SET thumb_path=NULL WHERE id IN (SELECT photo_id FROM tv_photos WHERE tv_id=?)", (tvid,)); db.commit()
+    _FakeSvc.ok = False
+    _aio.run(_w._import_from_tv(tvid))
+    st = dict(_w.import_state)
+    assert st["thumbs"] == 0 and "thumbnails unavailable" in st["error"] and "firmware says no" in st["error"], st
 finally:
     _w.TVService = _orig
-assert _w.import_state["error"] == "" and _w.import_state["total"] == 2, dict(_w.import_state)
-rows = {r["filename"]: r for r in db.execute("SELECT p.* FROM photos p JOIN tv_photos tp ON tp.photo_id=p.id WHERE tp.tv_id=?", (tvid,))}
-assert rows["MY_F0001"]["source"] == "import" and rows["MY_F0001"]["thumb_path"] and rows["MY_F0001"]["width"] == 10
-assert rows["MY_F0002"]["source"] == "import" and len(rows) == 2
 print("import: ok")

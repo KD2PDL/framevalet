@@ -63,9 +63,11 @@ class TVService:
         self.client_name = tv_row["client_name"]
         self._tv = None
         self._art_client = None
+        self.timeout = 30
 
     # -- connection -------------------------------------------------------
-    def _art(self, timeout=30):
+    def _art(self, timeout=None):
+        timeout = self.timeout if timeout is None else timeout
         if self._tv is None:
             # A NO_TOKEN marker means: paired, but the TV issues no token, so
             # connect without one rather than sending the marker as a token.
