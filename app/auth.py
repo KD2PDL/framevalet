@@ -23,10 +23,18 @@ COOKIE = "fv_session"
 PERMS = {
     "upload":     "Upload photos",
     "delete_any": "Delete anyone's photos",
-    "tvs":        "Manage TVs (pairing, art mode, schedules, import)",
+    "tvs":        "Manage TVs",
     "users":      "Manage users",
-    "settings":   "Settings, remote access, maintenance",
+    "settings":   "Settings & maintenance",
     "logs":       "View logs",
+}
+PERM_HINTS = {
+    "upload":     "add photos from any device",
+    "delete_any": "members otherwise delete only their own uploads",
+    "tvs":        "pairing, art mode, schedules, import from TV",
+    "users":      "create users and edit their access",
+    "settings":   "settings, remote access, update, backup, restore",
+    "logs":       "live view and log file downloads",
 }
 ADMIN_PERMS = ("tvs", "users", "settings", "logs")   # any of these opens the Admin/TVs nav
 

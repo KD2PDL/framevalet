@@ -37,6 +37,22 @@
   {% endif %}
 </form>
 {% endmacro %}
+{% macro perm_options(checked, show_admin, is_admin) %}
+  {% if show_admin %}
+  <label class="perm-opt perm-opt-admin">
+    <input type="checkbox" name="role" value="admin" {% if is_admin %}checked{% endif %}>
+    <span><strong>Administrator</strong><small>everything below, plus changing roles</small></span>
+  </label>
+  {% elif is_admin %}
+  <p class="muted perm-note">Administrator. Only an admin can change that.</p>
+  {% endif %}
+  {% for k, label in PERMS.items() %}
+  <label class="perm-opt">
+    <input type="checkbox" name="perms" value="{{ k }}" {% if k in checked %}checked{% endif %}>
+    <span><strong>{{ label }}</strong><small>{{ PERM_HINTS[k] }}</small></span>
+  </label>
+  {% endfor %}
+{% endmacro %}
 
 <div class="page-head">
   <h1>Admin</h1>
@@ -58,7 +74,7 @@
       </thead>
       <tbody>
         {% for u in users %}
-        <tr>
+        <tr class="user-row">
           <td><strong>{{ u.username }}</strong>{% if u.email %}<br><span class="muted">{{ u.email }}</span>{% endif %}
             <div class="flag-cell">
               {% if u.disabled %}<span class="tag tag-red">disabled</span>{% endif %}
@@ -67,22 +83,39 @@
           </td>
           <td class="perm-cell">
             {% if u.role == 'admin' %}<span class="tag tag-frame">admin: everything</span>
-            {% elif u.perm_set %}{% for k in PERMS if k in u.perm_set %}<span class="tag">{{ PERMS[k].split(' (')[0] | lower }}</span>{% endfor %}
+            {% elif u.perm_set %}{% for k in PERMS if k in u.perm_set %}<span class="tag">{{ PERMS[k] | lower }}</span>{% endfor %}
             {% else %}<span class="muted">view only</span>{% endif %}
           </td>
           <td class="action-cell">
-            <details class="tv-fold perm-fold">
-              <summary>Edit access</summary>
-              <form method="post" action="/admin/users/{{ u.id }}" class="perm-form">
-                <input type="hidden" name="action" value="perms">
-                {% if user.role == 'admin' %}
-                <label class="check-label perm-admin"><input type="checkbox" name="role" value="admin" {% if u.role == 'admin' %}checked{% endif %}> <strong>Administrator</strong> <span class="muted">(everything below, plus roles)</span></label>
-                {% elif u.role == 'admin' %}
-                <p class="muted">Administrator. Only an admin can change that.</p>
-                {% endif %}
-                {% for k, label in PERMS.items() %}
-                <label class="check-label"><input type="checkbox" name="perms" value="{{ k }}" {% if k in u.perm_set %}checked{% endif %}> {{ label }}</label>
-                {% endfor %}
+            <button type="button" class="btn btn-sm btn-primary" data-perm-toggle="perm-{{ u.id }}" aria-expanded="false" aria-controls="perm-{{ u.id }}">Edit access</button>
+            <form method="post" action="/admin/users/{{ u.id }}">
+              <input type="hidden" name="action" value="toggle_disabled">
+              <button class="btn btn-sm">{{ 'Enable' if u.disabled else 'Disable' }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}" class="inline-pw">
+              <input type="hidden" name="action" value="set_password">
+              <input type="password" name="password" placeholder="{{ 'Enable local login' if u.sso else 'New password' }}" minlength="8" required>
+              <button class="btn btn-sm">Set</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}" data-confirm="Delete user {{ u.username }}? This cannot be undone.">
+              <input type="hidden" name="action" value="delete">
+              <button class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        <tr class="perm-row" id="perm-{{ u.id }}" hidden>
+          <td colspan="3">
+            <form method="post" action="/admin/users/{{ u.id }}" class="perm-form">
+              <input type="hidden" name="action" value="perms">
+              <div class="perm-grid">{{ perm_options(u.perm_set, user.role == 'admin', u.role == 'admin') }}</div>
+              <div class="perm-actions">
+                <button class="btn btn-sm btn-primary">Save access</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-perm-toggle="perm-{{ u.id }}">Cancel</button>
+              </div>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
                 <button class="btn btn-sm btn-primary">Save access</button>
               </form>
             </details>
@@ -119,11 +152,7 @@
         </select>
       </label>
       {% endif %}
-      <div class="perm-form">
-        {% for k, label in PERMS.items() %}
-        <label class="check-label"><input type="checkbox" name="perms" value="{{ k }}" {% if k == 'upload' %}checked{% endif %}> {{ label }}</label>
-        {% endfor %}
-      </div>
+      <div class="perm-grid">{{ perm_options(['upload'], false, false) }}</div>
       <button class="btn btn-primary">Create user</button>
     </form>
   </div>

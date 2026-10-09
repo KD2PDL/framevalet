@@ -1686,6 +1686,16 @@
   if (rerunBtn) rerunBtn.addEventListener('click', () => location.reload());
 
   /* ---------------------------------------------------- confirm + copy */
+  document.querySelectorAll('[data-perm-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = document.getElementById(btn.dataset.permToggle);
+      if (!row) return;
+      row.hidden = !row.hidden;
+      document.querySelectorAll(`[data-perm-toggle="${btn.dataset.permToggle}"][aria-expanded]`)
+        .forEach((b) => b.setAttribute('aria-expanded', String(!row.hidden)));
+    });
+  });
+
   document.querySelectorAll('form.setting-row input[data-autosave]').forEach((cb) => {
     cb.addEventListener('change', () => cb.form.requestSubmit());
   });

@@ -18,6 +18,7 @@ router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["can"] = auth.can
 templates.env.globals["PERMS"] = auth.PERMS
+templates.env.globals["PERM_HINTS"] = auth.PERM_HINTS
 
 
 def render_page(request, db, name, user=None, **ctx):
