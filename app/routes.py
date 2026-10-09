@@ -592,9 +592,11 @@ def api_status(db=Depends(dbm.get_db), user=Depends(auth.current_user)):
     counts = {s: db.execute("SELECT COUNT(DISTINCT photo_id) c FROM tv_photos "
                             "WHERE status=?", (s,)).fetchone()["c"]
               for s in ("queued", "on_tv", "failed")}
+    tvs = db.execute("SELECT * FROM tvs WHERE enabled=1").fetchall()
     return {"tvs": {t["id"]: worker.tv_status(t["id"])
                     for t in db.execute("SELECT id FROM tvs")},
             "counts": counts, "import": dict(worker.import_state) | {"text": worker.import_text()},
+            "usage": {t["id"]: worker.tv_usage(db, t) | {"name": t["name"]} for t in tvs},
             "watch": status_watch(db)}
 
 
@@ -719,14 +721,19 @@ def add_tv(name: str = Form(...), host: str = Form(...), mac: str = Form(""),
 def edit_tv(tv_id: int, name: str = Form(...), host: str = Form(...),
             mac: str = Form(""), default_matte: str = Form("flexible_antique"),
             output_res: str = Form("4k"), auto_assign: bool = Form(False),
-            enabled: bool = Form(False),
+            enabled: bool = Form(False), storage_mb: int = Form(6000),
+            max_photos: int = Form(2000),
             db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     _tv(db, tv_id)
+    if not 100 <= storage_mb <= 100_000:
+        raise HTTPException(400, "storage must be between 100 and 100000 MB")
+    if not 10 <= max_photos <= 50_000:
+        raise HTTPException(400, "photo limit must be between 10 and 50000")
     db.execute("UPDATE tvs SET name=?, host=?, mac=?, default_matte=?, output_res=?, "
-               "auto_assign=?, enabled=? WHERE id=?",
+               "auto_assign=?, enabled=?, storage_mb=?, max_photos=? WHERE id=?",
                (name.strip(), host.strip(), mac.strip(), default_matte,
                 "1080p" if output_res == "1080p" else "4k",
-                int(auto_assign), int(enabled), tv_id))
+                int(auto_assign), int(enabled), storage_mb, max_photos, tv_id))
     db.commit()
     worker.kick()
     return RedirectResponse("/tvs", 303)

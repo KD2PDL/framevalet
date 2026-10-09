@@ -67,6 +67,48 @@ def tv_status(tv_id: int) -> dict:
                      "pushing": None})
 
 
+def tv_usage(db, tv) -> dict:
+    """Bytes the TV's My Photos holds, by our bookkeeping: the exact render we
+    pushed when we have it, the attached original for TV imports (the same
+    file that was uploaded), else the average of what we do know. The TV has
+    no API for this, so it is an estimate against the capacity set on the TV."""
+    rows = db.execute(
+        "SELECT tp.render_key, p.orig_path, p.source FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+        "WHERE tp.tv_id=? AND tp.status='on_tv'", (tv["id"],)).fetchall()
+    known, unknown = [], 0
+    for r in rows:
+        size = None
+        if r["render_key"]:
+            f = config.RENDERS_DIR / f"{r['render_key']}.jpg"
+            if f.is_file():
+                size = f.stat().st_size
+        if size is None and r["source"] == "import" and r["orig_path"] and Path(r["orig_path"]).is_file():
+            size = Path(r["orig_path"]).stat().st_size
+        if size is None:
+            unknown += 1
+        else:
+            known.append(size)
+    avg = (sum(known) / len(known)) if known else 600_000
+    used = int(sum(known) + unknown * avg)
+    cap = int(tv["storage_mb"] or 6000) * 1_000_000
+    max_photos = int(tv["max_photos"] or 2000)
+    return {"count": len(rows), "max_photos": max_photos, "used_bytes": used, "capacity_bytes": cap,
+            "pct": round(100 * max(used / cap if cap else 0, len(rows) / max_photos), 1),
+            "estimated": unknown}
+
+
+def tv_full_reason(db, tv, incoming_bytes: int = 0) -> str | None:
+    """Why a NEW photo must not be pushed to this TV right now, or None."""
+    u = tv_usage(db, tv)
+    if u["count"] >= u["max_photos"]:
+        return (f"TV is at its photo limit ({u['count']} of {u['max_photos']}). "
+                "Delete some photos or raise the limit on the TVs page.")
+    if u["used_bytes"] + incoming_bytes > u["capacity_bytes"]:
+        return (f"TV storage is full ({u['used_bytes'] / 1e9:.1f} of {u['capacity_bytes'] / 1e9:.1f} GB). "
+                "Delete some photos or adjust the capacity on the TVs page.")
+    return None
+
+
 def assign_photo(db, photo_id: int, tv_ids=None):
     """Queue a photo to given TVs (default: all enabled auto-assign TVs)."""
     if tv_ids is None:
@@ -132,6 +174,19 @@ def _push_tv(db, tv, svc: TVService) -> int:
         st["pushing"] = row["filename"]
         try:
             path, key = ensure_render(db, row, tv)
+            if not row["content_id"]:          # new copy: enforce the TV's hard caps
+                why = tv_full_reason(db, tv, path.stat().st_size)
+                if why:
+                    db.execute("UPDATE tv_photos SET status='failed', error=? WHERE tv_id=? AND photo_id=?",
+                               (why, tv["id"], row["photo_id"]))
+                    db.commit()
+                    if st.get("full_reason") != why:
+                        log.warning("push blocked [%s -> %s]: %s", row["filename"], tv["name"], why)
+                    st["full_reason"] = why
+                    ws.broadcast({"type": "push_failed", "tv_id": tv["id"], "photo_id": row["photo_id"],
+                                  "filename": row["filename"], "error": why[:120]})
+                    continue
+            st.pop("full_reason", None)
             matte = row["photo_matte"] or tv["default_matte"]
             cid = svc.upload(path.read_bytes(), matte, row["taken_date"])
             if row["content_id"]:   # edit re-push: replace the old copy

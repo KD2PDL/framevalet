@@ -632,3 +632,38 @@ try:
 finally:
     _routes.TVService = _orig_routes_svc
 print("control: ok")
+
+
+# --- TV storage estimate: exact sizes where known, average for the rest, pct vs capacity
+tvrow = db.execute("SELECT * FROM tvs WHERE id=?", (tvrow["id"],)).fetchone()
+u = _w.tv_usage(db, tvrow)
+on_tv = db.execute("SELECT COUNT(*) FROM tv_photos WHERE tv_id=? AND status='on_tv'", (tvrow["id"],)).fetchone()[0]
+assert u["count"] == on_tv and u["capacity_bytes"] == 6000 * 1_000_000 and u["used_bytes"] > 0 and 0 <= u["pct"] < 100, u
+db.execute("UPDATE tvs SET storage_mb=1 WHERE id=?", (tvrow["id"],)); db.commit()
+u2 = _w.tv_usage(db, db.execute("SELECT * FROM tvs WHERE id=?", (tvrow["id"],)).fetchone())
+assert u2["capacity_bytes"] == 1_000_000 and u2["pct"] > u["pct"]
+db.execute("UPDATE tvs SET storage_mb=6000 WHERE id=?", (tvrow["id"],)); db.commit()
+with TestClient(_app) as c:
+    c.post("/login", data={"username": "alice", "password": "s3cure-pass-1"}, headers={"Origin": "http://testserver"})
+    st = c.get("/api/status").json()
+    assert str(tvrow["id"]) in st["usage"] and st["usage"][str(tvrow["id"])]["pct"] == u["pct"]
+print("usage: ok")
+
+
+# --- hard cap: at the photo limit the push loop refuses new copies with a reason, never uploads
+db.execute("UPDATE tvs SET max_photos=10 WHERE id=?", (tvrow["id"],)); db.commit()
+tvrow = db.execute("SELECT * FROM tvs WHERE id=?", (tvrow["id"],)).fetchone()
+assert _w.tv_usage(db, tvrow)["count"] < 10 and _w.tv_full_reason(db, tvrow) is None
+db.execute("UPDATE tvs SET max_photos=%d WHERE id=?" % _w.tv_usage(db, tvrow)["count"], (tvrow["id"],)); db.commit()
+tvrow = db.execute("SELECT * FROM tvs WHERE id=?", (tvrow["id"],)).fetchone()
+assert "photo limit" in _w.tv_full_reason(db, tvrow)
+newp = db.execute("INSERT INTO photos(filename, sha256, orig_path, width, height, created) VALUES('cap.jpg','shaCAP',?,400,200,?)", (str(src), dbm.now())).lastrowid
+db.execute("INSERT INTO tv_photos(tv_id, photo_id, status) VALUES(?,?,'queued')", (tvrow["id"], newp)); db.commit()
+class _NoUpload:
+    def upload(self, *a, **k): raise AssertionError("upload must not be attempted when the TV is full")
+    def delete(self, *a, **k): pass
+_w._push_tv(db, tvrow, _NoUpload())
+row = db.execute("SELECT status, error FROM tv_photos WHERE tv_id=? AND photo_id=?", (tvrow["id"], newp)).fetchone()
+assert row["status"] == "failed" and "photo limit" in row["error"], dict(row)
+db.execute("UPDATE tvs SET max_photos=2000 WHERE id=?", (tvrow["id"],)); db.commit()
+print("hard cap: ok")

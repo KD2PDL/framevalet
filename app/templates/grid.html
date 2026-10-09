@@ -13,6 +13,7 @@
 
 <div class="statusline">
   <span id="countsLine">&nbsp;</span>
+  <span id="usageLine" class="usage-line" hidden><span class="usage-bar"><span class="usage-fill" id="usageFill"></span></span><span id="usageText"></span></span>
   <span id="importLine" class="import-line" {% if not import_state.running %}hidden{% endif %}>Importing from TV: <span id="importProgress">{{ import_text(import_state) }}</span></span>
   {% if import_state.error %}<span class="import-err">Import error: {{ import_state.error }}</span>{% endif %}
 </div>

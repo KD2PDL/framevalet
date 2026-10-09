@@ -215,6 +215,21 @@
     if (c.failed) line += ` · ${c.failed} failed`;
     countsLine.textContent = line;
   }
+  const usageLine = $('#usageLine');
+  function renderUsage(usage) {
+    if (!usageLine || !usage) return;
+    const tvs = Object.values(usage);
+    if (!tvs.length) { usageLine.hidden = true; return; }
+    const u = tvs.reduce((a, b) => (b.pct > (a.pct || 0) ? b : a), tvs[0]);   // the fullest TV
+    const gb = (n) => (n / 1e9).toFixed(n < 1e9 ? 2 : 1);
+    const pct = Math.min(100, u.pct || 0);
+    $('#usageFill').style.width = `${pct}%`;
+    usageLine.classList.toggle('usage-warn', pct >= 80);
+    usageLine.classList.toggle('usage-full', pct >= 95);
+    $('#usageText').textContent = `${u.count} of ${u.max_photos} photos · ${gb(u.used_bytes)} of ${gb(u.capacity_bytes)} GB${tvs.length > 1 ? ` on ${u.name}` : ''}${u.estimated ? ' (est.)' : ''}`;
+    usageLine.title = `Hard caps set on the TVs page. New photos stop pushing at the limit and show under Failed with the reason.`;
+    usageLine.hidden = false;
+  }
   function refreshCountsFromCards() {
     if (!grid || !countsLine) return;
     const c = { on_tv: 0, queued: 0, failed: 0 };
@@ -1248,6 +1263,7 @@
       const s = await res.json();
       absorbTvMap(s.tvs);
       if (grid && s.counts) renderCounts(s.counts);
+      if (grid && s.usage) renderUsage(s.usage);
       if (importLine && s.import) {
         importLine.hidden = !s.import.running;
         if (importProgress) importProgress.textContent = s.import.text || `${s.import.done}/${s.import.total}`;

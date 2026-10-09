@@ -53,6 +53,8 @@
       <label>Host (IP) <input type="text" name="host" value="{{ t.host }}" required></label>
       <label>MAC address <input type="text" name="mac" value="{{ t.mac }}" placeholder="AA:BB:CC:DD:EE:FF"></label>
       <label>Default matte <input type="text" name="default_matte" value="{{ t.default_matte }}"></label>
+      <label>Photo limit (hard cap) <input type="number" name="max_photos" value="{{ t.max_photos or 2000 }}" min="10" max="50000"></label>
+      <label>My Photos capacity (MB) <input type="number" name="storage_mb" value="{{ t.storage_mb or 6000 }}" min="100" max="100000" title="6000 for 2021 and newer Frames, 500 for 2017-2020 models"></label>
       <label>Output resolution
         <select name="output_res">
           <option value="4k" {% if t.output_res == '4k' %}selected{% endif %}>4K</option>

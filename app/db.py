@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS tvs (
   output_res TEXT NOT NULL DEFAULT '4k',        -- '4k' | '1080p'
   auto_assign INTEGER NOT NULL DEFAULT 1,       -- new photos queue here automatically
   enabled INTEGER NOT NULL DEFAULT 1,
+  storage_mb INTEGER NOT NULL DEFAULT 6000,     -- My Photos capacity; 500 on 2017-2020 Frames
+  max_photos INTEGER NOT NULL DEFAULT 2000,     -- hard cap enforced by the push loop
   created REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS photos (
@@ -131,7 +133,9 @@ def init():
     for stmt in ("ALTER TABLE photos ADD COLUMN matte TEXT",       # pre-release column adds
                  "ALTER TABLE users ADD COLUMN email TEXT",
                  "ALTER TABLE users ADD COLUMN sso INTEGER NOT NULL DEFAULT 0",
-                 "ALTER TABLE users ADD COLUMN perms TEXT"):
+                 "ALTER TABLE users ADD COLUMN perms TEXT",
+                 "ALTER TABLE tvs ADD COLUMN storage_mb INTEGER NOT NULL DEFAULT 6000",
+                 "ALTER TABLE tvs ADD COLUMN max_photos INTEGER NOT NULL DEFAULT 2000"):
         with __import__("contextlib").suppress(Exception):
             db.execute(stmt)
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE) "

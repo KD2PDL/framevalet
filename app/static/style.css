@@ -761,3 +761,11 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .ctl-row label { font-size: .85rem; font-weight: 600; display: flex; gap: .35rem; align-items: center; }
 .ctl-row select { width: auto; }
 .ctl-state { margin: .2rem 0 .8rem; min-height: 1.2em; }
+
+/* TV storage in the photo bar */
+.usage-line { display: inline-flex; align-items: center; gap: .45rem; margin-left: .8rem; color: var(--ink-soft); font-size: .85rem; }
+.usage-bar { width: 90px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.usage-fill { display: block; height: 100%; background: var(--accent); transition: width .3s ease-out; }
+.usage-warn .usage-fill { background: var(--warn); }
+.usage-full .usage-fill { background: var(--bad); }
+.usage-full { color: var(--bad); font-weight: 600; }
