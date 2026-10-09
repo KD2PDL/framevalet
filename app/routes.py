@@ -910,6 +910,15 @@ def edit_user(uid: int, action: str = Form(...), password: str = Form(""),
         if target["role"] == "admin" and admins <= 1 and not target["disabled"]:
             raise HTTPException(400, "cannot disable the last admin")
         db.execute("UPDATE users SET disabled=1-disabled WHERE id=?", (uid,))
+    elif action == "toggle_role":
+        if target["role"] == "admin":
+            if admins <= 1:
+                raise HTTPException(400, "cannot demote the last admin")
+            if target["id"] == user["id"]:
+                raise HTTPException(400, "demote yourself from another admin account")
+            db.execute("UPDATE users SET role='member' WHERE id=?", (uid,))
+        else:
+            db.execute("UPDATE users SET role='admin', can_delete_any=1 WHERE id=?", (uid,))
     elif action == "toggle_upload":
         db.execute("UPDATE users SET can_upload=1-can_upload WHERE id=?", (uid,))
     elif action == "toggle_delete_any":

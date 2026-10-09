@@ -74,6 +74,10 @@
               <button class="btn btn-sm">{{ 'Enable' if u.disabled else 'Disable' }}</button>
             </form>
             <form method="post" action="/admin/users/{{ u.id }}">
+              <input type="hidden" name="action" value="toggle_role">
+              <button class="btn btn-sm">{{ 'Make member' if u.role == 'admin' else 'Make admin' }}</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}">
               <input type="hidden" name="action" value="toggle_upload">
               <button class="btn btn-sm">{{ 'Revoke upload' if u.can_upload else 'Allow upload' }}</button>
             </form>

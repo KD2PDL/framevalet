@@ -355,3 +355,19 @@ assert maint.package_version().startswith("v") or maint.package_version() == ""
 config.set(db, "auto_update", "true"); assert config.get(db, "auto_update") == "true"
 maint.auto_update()                                   # not under systemd here: must be a no-op
 print("versions: ok")
+
+
+# --- role toggle guards: last admin stays admin, promotion grants delete-any
+from fastapi import HTTPException as _HE
+from app import routes as _routes
+admin_row = db.execute("SELECT * FROM users WHERE username='alice'").fetchone()
+alice_id = admin_row["id"]
+db.execute("UPDATE users SET role='member' WHERE role='admin' AND id!=?", (alice_id,)); db.commit()
+try:
+    _routes.edit_user(alice_id, action="toggle_role", db=db, user=admin_row); raise AssertionError("demoted last admin")
+except _HE as e:
+    assert e.status_code == 400
+_routes.edit_user(db.execute("SELECT id FROM users WHERE username='ann'").fetchone()["id"], action="toggle_role", db=db, user=admin_row)
+ann = db.execute("SELECT role, can_delete_any FROM users WHERE username='ann'").fetchone()
+assert ann["role"] == "admin" and ann["can_delete_any"] == 1, dict(ann)
+print("roles: ok")
