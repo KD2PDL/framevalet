@@ -135,6 +135,7 @@ with rclone preinstalled.
 | `JPEG_QUALITY`, `UNSHARP`, `RECONCILE_MINUTES` | Render/sync tuning |
 | `WATCH_ENABLED`, `WATCH_INTERVAL`, `RCLONE_REMOTE`, `RCLONE_INTERVAL` | Folder watcher + cloud sync |
 | `UNSPLASH_KEY`, `PEXELS_KEY`, `PIXABAY_KEY`, `NASA_KEY`, `RIJKSMUSEUM_KEY` | External source keys |
+| `AUTO_UPDATE` | `true` to self-update hourly (git + systemd installs) |
 | `BACKUP_INTERVAL`, `BACKUP_REMOTE`, `BACKUP_PASSPHRASE`, `BACKUP_PING_URL` | Scheduled backups (hours, rclone remote, encryption, health ping) |
 | `CF_TUNNEL_TOKEN`, `CF_TUNNEL_AUTOSTART` | Cloudflare Tunnel (see Remote access) |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `CF_ACCESS_AUTO_PROVISION`, `CF_ACCESS_DEFAULT_ROLE` | Cloudflare Access sign-in |
@@ -150,8 +151,10 @@ under `data/logs/` (5 × 5 MB), each downloadable, or all at once as a zip.
 - **Update**: on a git checkout under systemd (the Proxmox installer), Admin
   shows the running commit and how many commits behind `origin/main` it is;
   **Update now** pulls, installs and restarts through a detached systemd unit.
-  The commit you were on is remembered, so **Roll back** undoes a bad release
-  with one click. Docker installs update by pulling a new image.
+  The version you were on is remembered, so **Roll back** undoes a bad release
+  with one click. Tick **Update automatically** and the app checks hourly and
+  updates itself. Versions are git tags (`v0.2.0`; `v0.2.0+3` means three
+  commits past the tag). Docker installs update by pulling a new image.
 - **Backup**: a `tar.gz` of the database, TV pairing tokens and branding
   (everything that isn't a photo or a derived render). The last 7 live in
   `data/backups/` and are downloadable. Set an interval and, optionally, an

@@ -17,6 +17,9 @@
       <option value="{{ opt }}" {% if s.value == opt %}selected{% endif %}>{{ opt }}</option>
       {% endfor %}
     </select>
+    {% elif kind == 'check' %}
+    <input type="hidden" name="value" value="false">
+    <input type="checkbox" name="value" value="true" data-autosave {% if s.value == 'true' %}checked{% endif %} {% if s.env_pinned %}disabled{% endif %}>
     {% elif kind == 'color' %}
     <input type="color" name="value" value="{{ s.value }}" {% if s.env_pinned %}disabled{% endif %}>
     {% elif kind == 'number' %}
@@ -28,7 +31,7 @@
     <input type="text" name="value" value="{{ s.value or '' }}" {% if extra %}placeholder="{{ extra }}"{% endif %} {% if s.env_pinned %}disabled{% endif %}>
     {% endif %}
   </label>
-  {% if not s.env_pinned %}
+  {% if not s.env_pinned and kind != 'check' %}
   <button class="btn btn-sm">Save</button>
   {% if s.secret and s.value %}<button class="btn btn-sm btn-ghost" name="clear" value="1">Clear</button>{% endif %}
   {% endif %}
@@ -195,13 +198,13 @@
   <div class="panel">
     <h3>Update</h3>
     {% if not update.checkout %}
-    <p class="status-item">Installed from an image. Update by pulling a new image and recreating the container{% if update.docker %} (<code>docker compose pull &amp;&amp; docker compose up -d</code>){% endif %}.</p>
+    <p class="status-item">{% if update.version %}Running <strong>{{ update.version }}</strong>. {% endif %}Installed from an image. Update by pulling a new image and recreating the container{% if update.docker %} (<code>docker compose pull &amp;&amp; docker compose up -d</code>){% endif %}.</p>
     {% else %}
     <p class="status-item" id="updateStatus">
-      Running <code>{{ update.commit }}</code>{% if update.date %} ({{ update.date }}){% endif %}.
+      Running <strong>{{ update.version or update.commit }}</strong>{% if update.date %} ({{ update.date }}){% endif %}.
       {% if update.behind is none %}<span class="muted">Could not check for updates{% if update.error %}: {{ update.error }}{% endif %}</span>
       {% elif update.behind == 0 %}Up to date.
-      {% else %}<strong>{{ update.behind }} update{{ '' if update.behind == 1 else 's' }} available</strong>{% if update.latest %}: {{ update.latest }}{% endif %}{% endif %}
+      {% else %}<strong>{{ update.latest_version or 'Update' }} available</strong>{% if update.latest %}: {{ update.latest }}{% endif %}{% endif %}
     </p>
     <div class="row-form">
       <button type="button" class="btn btn-sm btn-primary" id="updateBtn" {% if not update.can_update or not update.behind %}disabled{% endif %}>Update now</button>
@@ -209,6 +212,11 @@
       <button type="button" class="btn btn-sm" id="restartBtn">Restart app</button>
       {% if update.previous and update.can_update %}<button type="button" class="btn btn-sm btn-danger" id="rollbackBtn" data-sha="{{ update.previous }}">Roll back to {{ update.previous }}</button>{% endif %}
     </div>
+    {% if update.can_update %}
+    <div class="settings-grid">
+      {{ setting_row('auto_update', 'Update automatically (checks hourly, restarts when a release is out)', 'check', none) }}
+    </div>
+    {% endif %}
     {% if not update.can_update %}<p class="hint">Self-update needs the app running under systemd (the Proxmox installer does this). Otherwise: <code>cd /opt/framevalet &amp;&amp; git pull &amp;&amp; .venv/bin/pip install -q . &amp;&amp; systemctl restart framevalet</code></p>{% endif %}
     {% endif %}
   </div>

@@ -313,10 +313,14 @@ maint.ping(url, True, "x.tar.gz"); maint.ping(url, False, "rclone copy: boom")
 assert "status=up" in hits[0] and "status=down" in hits[1] and "boom" in hits[1], hits
 maint.ping("http://127.0.0.1:1/", False)                                   # unreachable: no raise
 # rollback marker: previous sha surfaces only when HEAD moved on
-maint.PREVIOUS_FILE.write_text("0000000deadbeef")
-st = maint.update_status(refresh=True)
-assert st["previous"] == "0000000" if st["checkout"] else True, st
-maint.PREVIOUS_FILE.unlink()
+if maint.is_checkout():
+    prev = maint._git("rev-parse", "HEAD~1")
+    maint.PREVIOUS_FILE.write_text(prev)
+    st = maint.update_status(refresh=True)
+    assert st["previous"] == maint._describe(prev) and st["previous"], st
+    maint.PREVIOUS_FILE.write_text("0000000deadbeef")          # stale sha: ignored, no error
+    assert maint.update_status(refresh=True)["previous"] == ""
+    maint.PREVIOUS_FILE.unlink()
 print("maint extras: ok")
 
 
@@ -342,3 +346,12 @@ import zipfile as _zf
 assert "framevalet.log" in _zf.ZipFile(_io.BytesIO(logbuf.zip_all())).namelist()
 logbuf.set_level("INFO")
 print("logs: ok")
+
+
+# --- versions: describe() maps tags to vX.Y.Z / vX.Y.Z+N, falls back to sha
+v = maint._describe("HEAD")
+assert v.startswith("v") or len(v) >= 7, v
+assert maint.package_version().startswith("v") or maint.package_version() == ""
+config.set(db, "auto_update", "true"); assert config.get(db, "auto_update") == "true"
+maint.auto_update()                                   # not under systemd here: must be a no-op
+print("versions: ok")

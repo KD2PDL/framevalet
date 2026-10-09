@@ -43,6 +43,7 @@ SETTINGS = {
     "cf_access_aud":    ("CF_ACCESS_AUD", ""),          # application audience tag
     "cf_access_autoprovision": ("CF_ACCESS_AUTO_PROVISION", "true"),
     "cf_access_default_role": ("CF_ACCESS_DEFAULT_ROLE", "member"),
+    "auto_update":      ("AUTO_UPDATE", "false"),      # hourly check; pull + restart when behind
     # Scheduled backups (see maint.py). Local archives are always kept (last 7).
     "backup_interval":  ("BACKUP_INTERVAL", "24"),      # hours; 0 = off
     "backup_remote":    ("BACKUP_REMOTE", ""),          # e.g. onedrive:FrameValet Backups

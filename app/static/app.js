@@ -1686,6 +1686,10 @@
   if (rerunBtn) rerunBtn.addEventListener('click', () => location.reload());
 
   /* ---------------------------------------------------- confirm + copy */
+  document.querySelectorAll('form.setting-row input[data-autosave]').forEach((cb) => {
+    cb.addEventListener('change', () => cb.form.requestSubmit());
+  });
+
   document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (e) => {
       if (!confirm(form.dataset.confirm)) e.preventDefault();

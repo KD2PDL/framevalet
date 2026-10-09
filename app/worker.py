@@ -460,6 +460,7 @@ async def run():
     log.info("worker started")
     last_watch = last_rclone = last_sweep = 0.0
     last_backup = time.time()          # first scheduled backup one interval after boot
+    last_update_check = time.time()    # auto-update looks hourly, first look an hour after boot
     while True:
         db = dbm.connect()
         try:
@@ -472,6 +473,10 @@ async def run():
                time.time() - last_watch > int(config.get(db, "watch_interval")):
                 await asyncio.to_thread(_scan_watch_folder, db)
                 last_watch = time.time()
+
+            if config.get(db, "auto_update") == "true" and time.time() - last_update_check > 3600:
+                last_update_check = time.time()
+                await asyncio.to_thread(maint.auto_update)
 
             hours = int(config.get(db, "backup_interval") or 0)
             if hours and time.time() - last_backup > hours * 3600:

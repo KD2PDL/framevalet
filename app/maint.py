@@ -73,23 +73,50 @@ def can_self_manage() -> bool:
 _update_cache = {"at": 0.0, "data": None}
 
 
+def package_version() -> str:
+    try:
+        from importlib.metadata import version
+        return "v" + version("framevalet")
+    except Exception:
+        return ""
+
+
+def _describe(ref: str) -> str:
+    """Release tag for a ref, e.g. v0.2.0, or v0.2.0+3 when commits follow the tag."""
+    try:
+        out = _git("describe", "--tags", "--always", "--long", ref)
+    except Exception:
+        return _git("rev-parse", "--short", ref)
+    parts = out.rsplit("-", 2)              # v0.2.0-3-gabc1234
+    if len(parts) == 3 and parts[1].isdigit():
+        return parts[0] if parts[1] == "0" else f"{parts[0]}+{parts[1]}"
+    return out                              # no tag yet: short sha
+
+
 def update_status(refresh=False) -> dict:
-    """Current commit, and how far behind origin/main we are (fetch cached 10 min)."""
+    """Current version, and how far behind origin/main we are (fetch cached 10 min)."""
     if not is_checkout():
-        return {"checkout": False, "docker": Path("/.dockerenv").exists()}
+        return {"checkout": False, "docker": Path("/.dockerenv").exists(),
+                "version": package_version()}
     if not refresh and _update_cache["data"] and time.time() - _update_cache["at"] < 600:
         return _update_cache["data"]
-    d = {"checkout": True, "can_update": can_self_manage(), "commit": "", "behind": None,
-         "latest": "", "error": "", "previous": ""}
+    d = {"checkout": True, "can_update": can_self_manage(), "commit": "", "version": "",
+         "behind": None, "latest": "", "latest_version": "", "error": "", "previous": ""}
     try:
         d["commit"] = _git("rev-parse", "--short", "HEAD")
+        d["version"] = _describe("HEAD")
         prev = PREVIOUS_FILE.read_text().strip() if PREVIOUS_FILE.exists() else ""
-        if prev and not _git("rev-parse", "--short", "HEAD").startswith(prev[:7]):
-            d["previous"] = prev[:7]
+        if prev and not d["commit"].startswith(prev[:7]):
+            try:
+                _git("cat-file", "-e", f"{prev}^{{commit}}")
+                d["previous"] = _describe(prev)
+            except Exception:
+                pass                                    # recorded sha no longer exists
         d["date"] = _git("log", "-1", "--format=%cs")
-        _git("fetch", "-q", "origin", "main", timeout=30)
+        _git("fetch", "-q", "--tags", "origin", "main", timeout=30)
         d["behind"] = int(_git("rev-list", "--count", "HEAD..origin/main"))
         d["latest"] = _git("log", "-1", "--format=%s", "origin/main")
+        d["latest_version"] = _describe("origin/main")
     except Exception as e:   # offline, or not a clone of origin: still show the commit
         d["error"] = str(e)[:200]
     _update_cache.update(at=time.time(), data=d)
@@ -113,6 +140,16 @@ def start_update():
         f"&& systemctl restart {unit}"))
     _update_cache["at"] = 0.0
     log.info("update started (origin/main)")
+
+
+def auto_update():
+    """Worker hook (hourly when enabled): pull + restart if main is ahead."""
+    if not (is_checkout() and can_self_manage()):
+        return
+    st = update_status(refresh=True)
+    if st.get("behind"):
+        log.info("auto-update: %s -> %s (%s)", st["version"], st["latest_version"], st["latest"])
+        start_update()
 
 
 def rollback():
