@@ -735,3 +735,5 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .perm-actions { display: flex; gap: .4rem; margin-top: .6rem; }
 .new-user-form { max-width: 560px; }
 .new-user-form .perm-opt { flex-direction: row; font-weight: 500; }
+.crop-rotate { display: flex; gap: .2rem; }
+.crop-rotate .btn { font-size: 1.1rem; line-height: 1; padding: .3rem .55rem; }

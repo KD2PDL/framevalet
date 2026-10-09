@@ -88,18 +88,30 @@ def render_key(sha: str, edits: str | None, style: str, res: str,
     return hashlib.sha1(basis.encode()).hexdigest()
 
 
+def apply_edits(img, edits: str | None):
+    """Rotate (clockwise degrees), then crop (normalized coords on the rotated
+    image). The editor shows the rotated original, so crop boxes are drawn in
+    that frame."""
+    if not edits:
+        return img
+    e = json.loads(edits)
+    rot = int(e.get("rotate") or 0) % 360
+    if rot:
+        img = img.rotate(-rot, expand=True)     # PIL rotates counter-clockwise
+    crop = e.get("crop")
+    if crop:
+        x, y, w, h = crop
+        box = (round(x * img.width), round(y * img.height),
+               round((x + w) * img.width), round((y + h) * img.height))
+        if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
+            img = img.crop(box)
+    return img
+
+
 def render(orig_path: Path, out_path: Path, edits: str | None, style: str,
            res: str, quality: int, unsharp: bool):
-    """Original -> TV-ready JPEG. Crop first (normalized coords), then style."""
-    img = Image.open(orig_path).convert("RGB")
-    if edits:
-        crop = json.loads(edits).get("crop")
-        if crop:
-            x, y, w, h = crop
-            box = (round(x * img.width), round(y * img.height),
-                   round((x + w) * img.width), round((y + h) * img.height))
-            if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
-                img = img.crop(box)
+    """Original -> TV-ready JPEG. Rotate + crop first, then style."""
+    img = apply_edits(Image.open(orig_path).convert("RGB"), edits)
 
     tw, th = RES.get(res, RES["4k"])
     if style == "blurfill" and img.width / img.height < 1.3:
@@ -128,15 +140,7 @@ def render(orig_path: Path, out_path: Path, edits: str | None, style: str,
 def render_preview(orig_path: Path, out_path: Path, edits: str | None, longest=1600):
     """Just the cropped photo pixels (no fit-letterbox, no matte) so the browser
     editor can place it on a CSS matte stage. Mirrors the crop math in render()."""
-    img = Image.open(orig_path).convert("RGB")
-    if edits:
-        crop = json.loads(edits).get("crop")
-        if crop:
-            x, y, w, h = crop
-            box = (round(x * img.width), round(y * img.height),
-                   round((x + w) * img.width), round((y + h) * img.height))
-            if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
-                img = img.crop(box)
+    img = apply_edits(Image.open(orig_path).convert("RGB"), edits)
     if max(img.width, img.height) > longest:
         img.thumbnail((longest, longest), Image.LANCZOS)
     img.save(out_path, "JPEG", quality=88, optimize=True)
@@ -152,3 +156,9 @@ def make_thumb_from_bytes(data: bytes, out_thumb: Path):
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((THUMB, THUMB), Image.LANCZOS)
     img.save(out_thumb, "JPEG", quality=75, optimize=True)
+
+
+def rotated_original(orig_path: Path, out_path: Path, rot: int):
+    """Full-size rotated copy for the crop editor's stage (cached by caller)."""
+    img = Image.open(orig_path).convert("RGB").rotate(-(rot % 360), expand=True)
+    img.save(out_path, "JPEG", quality=92, optimize=True)

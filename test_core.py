@@ -492,3 +492,48 @@ except tvservice.TVError as e:
     assert "no answer within" in str(e), e
 assert _time.time() - t0 < 3
 print("deadline: ok")
+
+
+# --- rotate + crop: rotation first, crop in the rotated frame; attach gives a TV photo an original
+img = Image.new("RGB", (400, 200), "white"); img.paste((255, 0, 0), (0, 0, 200, 200))   # left half red
+bb = _io.BytesIO(); img.save(bb, "JPEG", quality=95)
+src = config.ORIGINALS_DIR / "rot.jpg"; src.write_bytes(bb.getvalue())
+out = config.RENDERS_DIR / "rot90.jpg"
+pipeline.render(src, out, json.dumps({"rotate": 90}), "fit", "1080p", 90, False)
+r = Image.open(out); assert (r.width, r.height) == (200, 400), r.size
+assert r.getpixel((100, 50))[1] < 80 and r.getpixel((100, 350))[1] > 200           # red on top (clockwise), white below
+pipeline.render(src, out, json.dumps({"rotate": 90, "crop": [0, 0.5, 1, 0.5]}), "fit", "1080p", 90, False)
+r = Image.open(out); assert (r.width, r.height) == (200, 200) and r.getpixel((100, 100))[1] > 200   # bottom half: white
+pipeline.rotated_original(src, config.THUMBS_DIR / "rot_x.jpg", 270)
+assert Image.open(config.THUMBS_DIR / "rot_x.jpg").size == (200, 400)
+# rotate route: accumulates, clears crop; crop route keeps rotate
+pid = db.execute("INSERT INTO photos(filename, orig_path, sha256, created) VALUES('r','%s','shaR',?)" % src, (dbm.now(),)).lastrowid; db.commit()
+_routes.save_crop(pid, {"crop": [0.1, 0.1, 0.5, 0.5]}, db=db, user=alice)
+_routes.rotate_photo(pid, {"deg": 90}, db=db, user=alice)
+e = json.loads(db.execute("SELECT edits FROM photos WHERE id=?", (pid,)).fetchone()["edits"])
+assert e == {"rotate": 90}, e
+_routes.save_crop(pid, {"crop": [0, 0, 0.5, 0.5]}, db=db, user=alice)
+e = json.loads(db.execute("SELECT edits FROM photos WHERE id=?", (pid,)).fetchone()["edits"])
+assert e["rotate"] == 90 and e["crop"] == [0, 0, 0.5, 0.5], e
+_routes.rotate_photo(pid, {"deg": -90}, db=db, user=alice)
+assert db.execute("SELECT edits FROM photos WHERE id=?", (pid,)).fetchone()["edits"] is None   # back to 0, no crop
+# attach original to an imported photo
+tvrow = db.execute("SELECT * FROM tvs WHERE host='192.0.2.9'").fetchone()
+ph = db.execute("SELECT p.* FROM photos p JOIN tv_photos tp ON tp.photo_id=p.id WHERE tp.tv_id=? AND tp.content_id='MY_F0002'", (tvrow["id"],)).fetchone()
+assert ph["orig_path"] is None
+res = _w.attach_original(db, tvrow["id"], "MY_F0002", bb.getvalue())
+assert res["already"] is False
+ph = db.execute("SELECT * FROM photos WHERE id=?", (ph["id"],)).fetchone()
+assert ph["orig_path"] and Path(ph["orig_path"]).is_file() and ph["width"] == 400 and ph["source"] == "import"
+assert _w.attach_original(db, tvrow["id"], "MY_F0002", bb.getvalue())["already"] is True
+rk = db.execute("SELECT render_key FROM tv_photos WHERE tv_id=? AND photo_id=?", (tvrow["id"], ph["id"])).fetchone()["render_key"]
+assert rk, "attached photo should count as already pushed"
+try:
+    _w.attach_original(db, tvrow["id"], "MY_F0003", bb.getvalue()); raise AssertionError("duplicate accepted")
+except ValueError as e2:
+    assert "already photo" in str(e2)
+try:
+    _w.attach_original(db, tvrow["id"], "MY_NOPE", b"x"); raise AssertionError("unknown id accepted")
+except ValueError:
+    pass
+print("rotate+attach: ok")

@@ -273,6 +273,43 @@ def ingest_bytes(db, data: bytes, filename: str, user_id=None,
     return cur.lastrowid
 
 
+def attach_original(db, tv_id: int, content_id: str, data: bytes) -> dict:
+    """Give a photo adopted from a TV its full-resolution original, so it can be
+    cropped, rotated and re-rendered. The TV copy is untouched until an edit
+    changes the render key. Returns {photo_id, already} or raises ValueError."""
+    row = db.execute(
+        "SELECT p.* FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+        "WHERE tp.tv_id=? AND tp.content_id=?", (tv_id, content_id)).fetchone()
+    if not row:
+        raise ValueError(f"no photo with content id {content_id} on TV {tv_id}")
+    sha = hashlib.sha256(data).hexdigest()
+    if row["orig_path"] and row["sha256"] == sha:
+        return {"photo_id": row["id"], "already": True}
+    other = db.execute("SELECT id FROM photos WHERE sha256=? AND id!=?", (sha, row["id"])).fetchone()
+    if other:
+        raise ValueError(f"this file is already photo #{other['id']}")
+    pid = secrets.token_hex(8)
+    orig = config.ORIGINALS_DIR / f"{pid}.jpg"
+    thumb = config.THUMBS_DIR / f"{pid}.jpg"
+    meta = pipeline.ingest(data, orig, thumb)
+    old_orig = row["orig_path"]
+    db.execute(
+        "UPDATE photos SET sha256=?, orig_path=?, thumb_path=?, width=?, height=?, "
+        "taken_date=COALESCE(taken_date, ?) WHERE id=?",
+        (meta["sha256"], str(orig), str(thumb), meta["width"], meta["height"],
+         meta["taken_date"], row["id"]))
+    # the TV already shows this exact image: record the current render as pushed
+    tv = db.execute("SELECT * FROM tvs WHERE id=?", (tv_id,)).fetchone()
+    key = pipeline.render_key(meta["sha256"], row["edits"], row["style"], tv["output_res"],
+                              int(config.get(db, "jpeg_quality")), config.get(db, "unsharp") == "true")
+    db.execute("UPDATE tv_photos SET render_key=? WHERE tv_id=? AND photo_id=?", (key, tv_id, row["id"]))
+    db.commit()
+    if old_orig:
+        with contextlib.suppress(OSError):
+            Path(old_orig).unlink()
+    return {"photo_id": row["id"], "already": False}
+
+
 def _scan_watch_folder(db):
     """Non-destructive import: new files in the watched folder are ingested and
     pushed. A file DISAPPEARING from the folder NEVER deletes anything -- a

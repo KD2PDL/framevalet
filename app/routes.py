@@ -239,6 +239,7 @@ def save_crop(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
     if not p["orig_path"]:
         raise HTTPException(400, "no original stored for this photo; crop unavailable")
     crop = body.get("crop")
+    current = json.loads(p["edits"]) if p["edits"] else {}
     if crop is not None:
         if (not isinstance(crop, list) or len(crop) != 4
                 or not all(isinstance(v, (int, float)) for v in crop)):
@@ -246,13 +247,42 @@ def save_crop(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
         x, y, w, h = crop
         if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 - x and 0 < h <= 1 - y):
             raise HTTPException(400, "crop out of bounds")
-        edits = json.dumps({"crop": [round(v, 5) for v in crop]})
+        current["crop"] = [round(v, 5) for v in crop]
     else:
-        edits = None
+        current.pop("crop", None)
+    edits = _edits_json(current)
     db.execute("UPDATE photos SET edits=? WHERE id=?", (edits, pid))
     db.commit()
     worker.kick()
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "edits": edits or ""})
+
+
+def _edits_json(e: dict) -> str | None:
+    e = {k: v for k, v in e.items() if v}          # drop rotate 0 / empty crop
+    return json.dumps(e) if e else None
+
+
+@router.post("/photo/{pid}/rotate")
+def rotate_photo(pid: int, body: dict = Body(...), db=Depends(dbm.get_db),
+                 user=Depends(auth.current_user)):
+    """Body: {"deg": 90 | -90 | 180}. Clears the crop: its coordinates were in
+    the old orientation. The push loop re-renders and replaces the TV copy."""
+    p = db.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone()
+    if not p:
+        raise HTTPException(404)
+    if not p["orig_path"]:
+        raise HTTPException(400, "no original stored for this photo; rotate unavailable")
+    deg = body.get("deg")
+    if deg not in (90, -90, 180, 270):
+        raise HTTPException(400, "deg must be 90, -90 or 180")
+    current = json.loads(p["edits"]) if p["edits"] else {}
+    current["rotate"] = (int(current.get("rotate") or 0) + deg) % 360
+    current.pop("crop", None)
+    edits = _edits_json(current)
+    db.execute("UPDATE photos SET edits=? WHERE id=?", (edits, pid))
+    db.commit()
+    worker.kick()
+    return JSONResponse({"ok": True, "edits": edits or "", "rotate": current["rotate"]})
 
 
 @router.post("/photo/{pid}/style")
@@ -489,9 +519,16 @@ def preview(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
 
 @router.get("/photo/{pid}/original")
 def original(pid: int, db=Depends(dbm.get_db), user=Depends(auth.current_user)):
-    p = db.execute("SELECT orig_path FROM photos WHERE id=?", (pid,)).fetchone()
+    p = db.execute("SELECT orig_path, edits, sha256 FROM photos WHERE id=?", (pid,)).fetchone()
     if not p or not p["orig_path"] or not Path(p["orig_path"]).is_file():
         raise HTTPException(404)
+    rot = int((json.loads(p["edits"]) if p["edits"] else {}).get("rotate") or 0) % 360
+    if rot:
+        out = config.THUMBS_DIR / f"rot_{p['sha256']}_{rot}.jpg"
+        if not out.exists():
+            pipeline.rotated_original(Path(p["orig_path"]), out, rot)
+        return FileResponse(out, media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=86400"})
     return FileResponse(p["orig_path"], media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=3600"})
 
@@ -680,6 +717,23 @@ def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs
     worker.log.info("import from TV %s requested by %s", tv_id, user["username"])
     worker.start_import(tv_id)
     return RedirectResponse("/", 303)
+
+
+@router.post("/tvs/{tv_id}/attach/{content_id}")
+async def attach_original(tv_id: int, content_id: str, file: UploadFile = File(...),
+                          db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
+    """Give an imported (TV-only) photo its original file, making it editable."""
+    _tv(db, tv_id)
+    data = await file.read(80_000_001)
+    if len(data) > 80_000_000:
+        raise HTTPException(413, "file too large (max 80 MB)")
+    try:
+        res = await asyncio.to_thread(worker.attach_original, db, tv_id, content_id, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except pipeline.PipelineError as e:
+        raise HTTPException(400, str(e)) from e
+    return JSONResponse({"ok": True, **res})
 
 
 @router.get("/tvs/{tv_id}/export")

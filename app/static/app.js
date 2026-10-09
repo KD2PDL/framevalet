@@ -1037,6 +1037,23 @@
       }
     });
 
+    async function rotate(deg) {
+      if (!cropCard) return;
+      try {
+        const r = await postJSON(`/photo/${cropCard.dataset.id}/rotate`, { deg });
+        cropCard.dataset.edits = JSON.stringify(r.edits || '');
+        norm = [0, 0, 1, 1];                       // crop was cleared server-side
+        cimg.onload = layout;
+        cimg.src = `/photo/${cropCard.dataset.id}/original?rot=${r.rotate}`;
+        if (window.__fvRefreshPreview) window.__fvRefreshPreview(cropCard);
+        toast('Rotated. Crop again if needed.', 'success');
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+    $('#rotLeft').addEventListener('click', () => rotate(-90));
+    $('#rotRight').addEventListener('click', () => rotate(90));
+
     window.addEventListener('resize', () => { if (!cropEd.hidden) layout(); });
 
     openCropEditor = (card, existingCrop) => {
@@ -1047,7 +1064,9 @@
         c.classList.toggle('active', c.dataset.aspect === ''));
       cropEd.hidden = false;
       document.body.style.overflow = 'hidden';
-      const src = `/photo/${card.dataset.id}/original`;
+      let rot = 0;
+      try { rot = JSON.parse(JSON.parse(card.dataset.edits || '""') || '{}').rotate || 0; } catch (_) { rot = 0; }
+      const src = `/photo/${card.dataset.id}/original?rot=${rot}`;
       if (cimg.src.endsWith(src) && cimg.naturalWidth) { layout(); return; }
       cimg.onload = layout;
       cimg.src = src;
