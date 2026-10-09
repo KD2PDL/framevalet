@@ -1,6 +1,6 @@
 [project]
 name = "framevalet"
-version = "0.3.5"
+version = "0.3.6"
 description = "Self-hosted, multi-user photo manager for Samsung Frame TVs: family uploads from any device, optimized and pushed to Art Mode."
 readme = "README.md"
 license = { text = "MIT" }

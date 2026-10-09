@@ -273,7 +273,7 @@ def doctor(tv_row) -> list[dict]:
              "screen (not Art Mode); press Allow on the remote when the popup appears.")
         return steps
     try:
-        count = len(svc.my_photos())
+        count = len({x["content_id"] for x in svc.my_photos()})
         step("Art channel", True, f"Authorized; {count} photos in My Photos on the TV"
              + ("" if svc.token_issued() else " (this TV issues no token; pairing is remembered by client name)"))
     except TVUnauthorized as e:

@@ -431,3 +431,30 @@ svc = tvservice.TVService(row); svc._art()
 assert svc.token_issued() and svc._tv.token_file.endswith("tv77.txt")
 svc.reset()
 print("pairing: ok")
+
+
+# --- import upgrades reconciler 'external' stubs instead of skipping them
+import asyncio as _aio
+from app import worker as _w
+db.execute("INSERT INTO tvs(name, host, created) VALUES('t','192.0.2.9',?)", (dbm.now(),)); db.commit()
+tvid = db.execute("SELECT id FROM tvs WHERE host='192.0.2.9'").fetchone()["id"]
+cur = db.execute("INSERT INTO photos(filename, source, created) VALUES('MY_F0001','external',?)", (dbm.now(),))
+db.execute("INSERT INTO tv_photos(tv_id, photo_id, content_id, status) VALUES(?,?,'MY_F0001','on_tv')", (tvid, cur.lastrowid)); db.commit()
+class _FakeSvc:
+    def __init__(self, row): pass
+    def my_photos(self): return [{"content_id": "MY_F0001", "width": 10, "height": 5, "image_date": "2024:01:01 00:00:00"},
+                                 {"content_id": "MY_F0001"},                           # TV lists duplicates
+                                 {"content_id": "MY_F0002", "width": 8, "height": 4}]
+    def thumbnail(self, cid):
+        b = _io.BytesIO(); Image.new("RGB", (40, 20), "red").save(b, "JPEG"); return b.getvalue()
+    def reset(self): pass
+_orig = _w.TVService; _w.TVService = _FakeSvc
+try:
+    _aio.run(_w._import_from_tv(tvid))
+finally:
+    _w.TVService = _orig
+assert _w.import_state["error"] == "" and _w.import_state["total"] == 2, dict(_w.import_state)
+rows = {r["filename"]: r for r in db.execute("SELECT p.* FROM photos p JOIN tv_photos tp ON tp.photo_id=p.id WHERE tp.tv_id=?", (tvid,))}
+assert rows["MY_F0001"]["source"] == "import" and rows["MY_F0001"]["thumb_path"] and rows["MY_F0001"]["width"] == 10
+assert rows["MY_F0002"]["source"] == "import" and len(rows) == 2
+print("import: ok")

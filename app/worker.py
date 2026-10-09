@@ -376,7 +376,8 @@ def start_import(tv_id: int):
 
 async def _import_from_tv(tv_id: int):
     """Adopt everything currently on a TV: per-TV manifest entries plus TV-side
-    thumbnails. Adopted photos are manageable but carry no original."""
+    thumbnails. Adopted photos are manageable but carry no original. Photos the
+    reconciler already recorded as 'external' are upgraded in place."""
     import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="")
 
     def _run():
@@ -384,11 +385,18 @@ async def _import_from_tv(tv_id: int):
         tv = db.execute("SELECT * FROM tvs WHERE id=?", (tv_id,)).fetchone()
         svc = TVService(tv)
         try:
-            items = svc.my_photos()
-            known = {r["content_id"] for r in db.execute(
-                "SELECT content_id FROM tv_photos WHERE tv_id=? AND content_id IS NOT NULL",
+            items: dict = {}
+            for x in svc.my_photos():                   # TV lists duplicates; keep the first
+                items.setdefault(x["content_id"], x)
+            managed = {r["content_id"] for r in db.execute(
+                "SELECT tp.content_id FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+                "WHERE tp.tv_id=? AND tp.content_id IS NOT NULL AND p.source!='external'",
                 (tv_id,))}
-            todo = [x for x in items if x["content_id"] not in known]
+            external = {r["content_id"]: r["photo_id"] for r in db.execute(
+                "SELECT tp.content_id, tp.photo_id FROM tv_photos tp JOIN photos p ON p.id=tp.photo_id "
+                "WHERE tp.tv_id=? AND tp.content_id IS NOT NULL AND p.source='external'",
+                (tv_id,))}
+            todo = [x for cid, x in items.items() if cid not in managed]
             import_state["total"] = len(todo)
             for x in todo:
                 cid = x["content_id"]
@@ -400,19 +408,29 @@ async def _import_from_tv(tv_id: int):
                         pipeline.make_thumb_from_bytes(data, thumb_path)
                     except Exception:
                         thumb_path = None
-                cur = db.execute(
-                    "INSERT INTO photos(filename, thumb_path, taken_date, width, height, "
-                    "source, created) VALUES(?,?,?,?,?,?,?)",
-                    (cid, str(thumb_path) if thumb_path else None, x.get("image_date"),
-                     x.get("width"), x.get("height"), "import", dbm.now()))
-                db.execute(
-                    "INSERT INTO tv_photos(tv_id, photo_id, content_id, status, matte) "
-                    "VALUES(?,?,?,?,?)",
-                    (tv_id, cur.lastrowid, cid, "on_tv", x.get("matte_id")))
+                if cid in external:                       # upgrade the reconciler's stub
+                    db.execute(
+                        "UPDATE photos SET thumb_path=?, taken_date=COALESCE(?, taken_date), "
+                        "width=?, height=?, source='import' WHERE id=?",
+                        (str(thumb_path) if thumb_path else None, x.get("image_date"),
+                         x.get("width"), x.get("height"), external[cid]))
+                else:
+                    cur = db.execute(
+                        "INSERT INTO photos(filename, thumb_path, taken_date, width, height, "
+                        "source, created) VALUES(?,?,?,?,?,?,?)",
+                        (cid, str(thumb_path) if thumb_path else None, x.get("image_date"),
+                         x.get("width"), x.get("height"), "import", dbm.now()))
+                    db.execute(
+                        "INSERT INTO tv_photos(tv_id, photo_id, content_id, status, matte) "
+                        "VALUES(?,?,?,?,?)",
+                        (tv_id, cur.lastrowid, cid, "on_tv", x.get("matte_id")))
                 db.commit()
                 import_state["done"] += 1
                 if import_state["done"] % 10 == 0 or import_state["done"] == import_state["total"]:
                     ws.broadcast({"type": "import", **import_state})
+            if todo:
+                ws.broadcast({"type": "counts_dirty"})
+                log.info("import from TV %s: %d adopted", tv_id, len(todo))
         finally:
             svc.reset()
             db.close()
