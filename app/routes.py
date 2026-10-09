@@ -677,6 +677,7 @@ def import_tv(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs
     _tv(db, tv_id)
     if worker.import_state["running"]:
         raise HTTPException(409, "an import is already running")
+    worker.log.info("import from TV %s requested by %s", tv_id, user["username"])
     worker.start_import(tv_id)
     return RedirectResponse("/", 303)
 

@@ -382,11 +382,13 @@ async def _import_from_tv(tv_id: int):
     firmware never answers thumbnail requests and we won't hang on 1,200 of
     them. Photos the reconciler recorded as 'external' are upgraded in place."""
     import_state.update(running=True, tv_id=tv_id, done=0, total=0, error="", thumbs=0, phase="photos")
+    t0 = time.time()
 
     def _run():
         db = dbm.connect()
         tv = db.execute("SELECT * FROM tvs WHERE id=?", (tv_id,)).fetchone()
         svc = TVService(tv)
+        log.info("import from TV %s (%s): listing My Photos", tv_id, tv["name"])
         try:
             items: dict = {}
             for x in svc.my_photos():                   # TV lists duplicates; keep the first
@@ -401,6 +403,8 @@ async def _import_from_tv(tv_id: int):
                 (tv_id,))}
             todo = [x for cid, x in items.items() if cid not in managed]
             import_state["total"] = len(todo)
+            log.info("import from TV %s: %d on the TV, %d already managed, %d to adopt (%d recorded as external)",
+                     tv_id, len(items), len(managed), len(todo), len(external))
             # phase 1: metadata, all at once
             for x in todo:
                 cid = x["content_id"]
@@ -422,7 +426,7 @@ async def _import_from_tv(tv_id: int):
             db.commit()
             if todo:
                 ws.broadcast({"type": "counts_dirty"})
-                log.info("import from TV %s: %d photos adopted", tv_id, len(todo))
+                log.info("import from TV %s: %d photos adopted in %.1fs", tv_id, len(todo), time.time() - t0)
             # phase 2: thumbnails for anything on this TV that lacks one
             import_state["phase"] = "thumbnails"
             need = db.execute(
@@ -430,7 +434,8 @@ async def _import_from_tv(tv_id: int):
                 "WHERE tp.tv_id=? AND tp.content_id IS NOT NULL AND p.source='import' "
                 "AND (p.thumb_path IS NULL OR p.thumb_path='')", (tv_id,)).fetchall()
             svc.timeout = 12
-            fails, first_err = 0, ""
+            fails, first_err, failed_total = 0, "", 0
+            log.info("import from TV %s: fetching %d thumbnails", tv_id, len(need))
             for n, r in enumerate(need, 1):
                 try:
                     data = svc._call(lambda a, c=r["content_id"]: a.get_thumbnail(c), attempts=1)
@@ -444,7 +449,10 @@ async def _import_from_tv(tv_id: int):
                     fails = 0
                 except Exception as e:
                     fails += 1
-                    first_err = first_err or f"{type(e).__name__}: {str(e)[:160]}"
+                    failed_total += 1
+                    if not first_err:
+                        first_err = f"{type(e).__name__}: {str(e)[:160]}"
+                        log.warning("import from TV %s: thumbnail for %s failed: %s", tv_id, r["content_id"], first_err)
                     svc.reset()
                     if fails >= 3:
                         log.warning("import from TV %s: thumbnails unavailable after %d tries (%s); "
@@ -453,7 +461,11 @@ async def _import_from_tv(tv_id: int):
                         break
                 if n % 10 == 0:
                     ws.broadcast({"type": "import", **import_state})
+                if n % 100 == 0:
+                    log.info("import from TV %s: thumbnails %d/%d (%d failed)", tv_id, n, len(need), failed_total)
             ws.broadcast({"type": "import", **import_state})
+            log.info("import from TV %s finished in %.0fs: %d adopted, %d thumbnails fetched, %d failed",
+                     tv_id, time.time() - t0, len(todo), import_state["thumbs"], failed_total)
         finally:
             svc.reset()
             db.close()
