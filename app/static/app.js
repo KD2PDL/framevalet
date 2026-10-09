@@ -728,13 +728,29 @@
       btnDelete.hidden = d.candelete !== '1';
       overlay.hidden = false;
       document.body.style.overflow = 'hidden';
+      fitOverlay();
     }
+    // iOS Safari: size the overlay to the *visible* viewport (address bar and
+    // toolbar come and go; 100vh/100dvh don't track it reliably on every version).
+    const vv = window.visualViewport;
+    function fitOverlay() {
+      if (overlay.hidden || !vv || window.innerWidth > 600) { overlay.style.cssText = ''; return; }
+      overlay.style.top = `${vv.offsetTop}px`;
+      overlay.style.left = `${vv.offsetLeft}px`;
+      overlay.style.width = `${vv.width}px`;
+      overlay.style.height = `${vv.height}px`;
+      overlay.style.right = 'auto';
+      overlay.style.bottom = 'auto';
+    }
+    if (vv) { vv.addEventListener('resize', fitOverlay); vv.addEventListener('scroll', fitOverlay); }
+    window.addEventListener('orientationchange', () => setTimeout(fitOverlay, 300));
     let closing = false;
     function closeOverlay() {
       if (overlay.hidden || closing) return;
       const finish = () => {
         overlay.classList.remove('closing');
         overlay.hidden = true;
+        overlay.style.cssText = '';
         img.src = '';
         currentCard = null;
         closing = false;
