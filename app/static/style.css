@@ -783,3 +783,10 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 .usage-warn .usage-fill { background: var(--warn); }
 .usage-full .usage-fill { background: var(--bad); }
 .usage-full { color: var(--bad); font-weight: 600; }
+
+/* Phones: no pinch/double-tap zoom, and 16px fields so iOS doesn't zoom on focus */
+html, body { touch-action: manipulation; }
+@media (max-width: 600px) {
+  input[type="text"], input[type="password"], input[type="number"], input[type="email"],
+  input[type="search"], input[type="date"], input[type="time"], select, textarea { font-size: 16px; }
+}

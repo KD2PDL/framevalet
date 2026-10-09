@@ -1825,6 +1825,17 @@
   if (rerunBtn) rerunBtn.addEventListener('click', () => location.reload());
 
   /* ---------------------------------------------------- confirm + copy */
+  // Block pinch zoom on iOS Safari (it ignores the viewport tag for this).
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) =>
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTap = 0;
+  document.addEventListener('touchend', (e) => {           // double-tap zoom
+    const now = Date.now();
+    if (now - lastTap < 300 && !e.target.closest('input, textarea, select, button, a, .card')) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
+
   document.querySelectorAll('[data-perm-toggle]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const row = document.getElementById(btn.dataset.permToggle);
