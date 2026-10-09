@@ -235,11 +235,11 @@ input:focus, select:focus, textarea:focus {
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
-.grid { column-width: 150px; column-gap: 8px; }
-.grid .card { break-inside: avoid; margin-bottom: 8px; width: 100%; display: block; }
+/* Rows, left to right (a real grid; multi-column layout filled top to bottom). */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.grid .card { width: 100%; display: block; }
 @media (min-width: 700px) {
-  .grid { column-width: 200px; column-gap: 10px; }
-  .grid .card { margin-bottom: 10px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 }
 .card {
   margin: 0; position: relative; border-radius: var(--radius); overflow: hidden;
