@@ -357,7 +357,7 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
      taller than what is visible and the bottom/top get cut off. */
   .overlay { padding: 0; align-items: stretch; inset: auto; top: 0; left: 0; right: 0; height: 100vh; height: 100dvh; }
   .overlay-panel { max-width: none; height: 100%; max-height: none; border-radius: 0; }
-  .overlay-close { top: calc(.4rem + var(--safe-top)); }
+  .overlay-panel .overlay-close { top: calc(.4rem + var(--safe-top)); }
   .overlay-imgwrap { padding-top: var(--safe-top); }
   .overlay-imgwrap, .overlay-imgwrap img { max-height: 40vh; max-height: 40dvh; }
 }
