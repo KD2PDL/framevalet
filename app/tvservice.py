@@ -40,6 +40,9 @@ BRIGHTNESS_RANGE = range(0, 11)
 COLOR_TEMP_RANGE = range(-5, 6)
 
 
+NO_TOKEN = "NOTOKEN"   # TV accepted our client but never issued a token (2025 art channel)
+
+
 class TVError(Exception):
     pass
 
@@ -64,8 +67,10 @@ class TVService:
     # -- connection -------------------------------------------------------
     def _art(self, timeout=30):
         if self._tv is None:
-            self._tv = SamsungTVWS(host=self.host, port=8002,
-                                   token_file=str(config.token_path(self.tv_id)),
+            # A NO_TOKEN marker means: paired, but the TV issues no token, so
+            # connect without one rather than sending the marker as a token.
+            token_file = None if self._stored_token() == NO_TOKEN else str(config.token_path(self.tv_id))
+            self._tv = SamsungTVWS(host=self.host, port=8002, token_file=token_file,
                                    timeout=timeout, name=self.client_name)
         if self._art_client is None:   # art() opens its own socket; cache + close it
             self._art_client = self._tv.art()
@@ -115,21 +120,32 @@ class TVService:
         except OSError:
             return False
 
-    def has_token(self) -> bool:
+    def _stored_token(self) -> str:
         try:
-            return bool(config.token_path(self.tv_id).read_text().strip())
+            return config.token_path(self.tv_id).read_text().strip()
         except OSError:
-            return False
+            return ""
+
+    def has_token(self) -> bool:
+        return bool(self._stored_token())
+
+    def token_issued(self) -> bool:
+        """True when the TV handed us a real token (older firmware)."""
+        return self.has_token() and self._stored_token() != NO_TOKEN
 
     def pair(self, timeout=65):
         """Blocking first connect; the TV shows the Allow popup. ONE attempt,
-        one held connection: retries would re-pop the prompt."""
+        one held connection: retries would re-pop the prompt. Newer Frames
+        (2025 LS03H) accept the client on the art channel without issuing a
+        token at all: a successful round trip is the proof, so record it."""
         self.reset()
         try:
             self._art(timeout=timeout).supported()
             self._call(lambda a: a.available(), attempts=1)
         finally:
             self.reset()
+        if not self.has_token():
+            config.token_path(self.tv_id).write_text(NO_TOKEN)
 
     # -- art content ------------------------------------------------------
     def available(self) -> list[dict]:
@@ -258,7 +274,8 @@ def doctor(tv_row) -> list[dict]:
         return steps
     try:
         count = len(svc.my_photos())
-        step("Art channel", True, f"Authorized; {count} photos in My Photos on the TV")
+        step("Art channel", True, f"Authorized; {count} photos in My Photos on the TV"
+             + ("" if svc.token_issued() else " (this TV issues no token; pairing is remembered by client name)"))
     except TVUnauthorized as e:
         step("Art channel", False, str(e),
              "On the TV: Settings > General & Privacy > External Device Manager > "

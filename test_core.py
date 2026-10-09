@@ -414,3 +414,20 @@ assert discovery._port_open("127.0.0.1") is None            # closed now
 assert discovery.sweep(ipaddress.ip_network("127.0.0.0/30")) == set()
 assert discovery.sweep(ipaddress.ip_network("10.0.0.0/8")) == set()   # too big: refused
 print("discovery: ok")
+
+
+# --- pairing without a token: marker counts as paired, connection sends no token
+from app import tvservice
+row = {"id": 77, "host": "192.0.2.10", "client_name": "framevalet"}
+svc = tvservice.TVService(row)
+assert not svc.has_token()
+config.token_path(77).write_text(tvservice.NO_TOKEN)
+assert svc.has_token() and not svc.token_issued()
+svc._art()                                      # constructor only, no network
+assert svc._tv.token_file is None and svc._tv.token is None
+svc.reset()
+config.token_path(77).write_text("real-token-123")
+svc = tvservice.TVService(row); svc._art()
+assert svc.token_issued() and svc._tv.token_file.endswith("tv77.txt")
+svc.reset()
+print("pairing: ok")

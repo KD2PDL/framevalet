@@ -605,8 +605,11 @@ def pair(tv_id: int, db=Depends(dbm.get_db), user=Depends(auth.require("tvs"))):
     svc = TVService(_tv(db, tv_id))
     try:
         svc.pair()
+        worker.log.info("TV %s paired (%s)", tv_id, "token issued" if svc.token_issued() else "no token, by client name")
+        worker.kick()
         return JSONResponse({"ok": True})
     except Exception as e:
+        worker.log.warning("TV %s pairing failed: %s", tv_id, e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
 
 
