@@ -348,8 +348,12 @@ body.has-bulkbar .wrap { padding-bottom: 7rem; }
 /* ---------------------------------------------------------------- overlay */
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 1rem; }
 @media (max-width: 600px) {
-  .overlay { padding: 0; align-items: stretch; }
-  .overlay-panel { max-width: none; max-height: 100vh; max-height: 100dvh; border-radius: 0; }
+  /* Size to the dynamic viewport: with Safari's bars showing, inset:0 is
+     taller than what is visible and the bottom/top get cut off. */
+  .overlay { padding: 0; align-items: stretch; inset: auto; top: 0; left: 0; right: 0; height: 100vh; height: 100dvh; }
+  .overlay-panel { max-width: none; height: 100%; max-height: none; border-radius: 0; }
+  .overlay-close { top: calc(.4rem + env(safe-area-inset-top, 0px)); }
+  .overlay-imgwrap { padding-top: env(safe-area-inset-top, 0px); }
   .overlay-imgwrap img { max-height: 44vh; max-height: 44dvh; }
 }
 .overlay-backdrop { position: absolute; inset: 0; background: rgba(26, 22, 15, .58); animation: fade-in .2s var(--ease-out) both; }
