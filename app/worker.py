@@ -435,14 +435,36 @@ async def _import_from_tv(tv_id: int):
                 "AND (p.thumb_path IS NULL OR p.thumb_path='')", (tv_id,)).fetchall()
             svc.timeout = 12
             fails, first_err, failed_total = 0, "", 0
+            method = None       # decided on the first photo: "single" or "batch"
             log.info("import from TV %s: fetching %d thumbnails", tv_id, len(need))
+
+            def fetch(cid):
+                nonlocal method
+                tries = [method] if method else ["single", "batch"]
+                errs = []
+                for m in tries:
+                    try:
+                        if m == "single":
+                            data = svc._call(lambda a: a.get_thumbnail(cid), attempts=1, deadline=20)
+                        else:
+                            got = svc._call(lambda a: a.get_thumbnail_list([cid]), attempts=1, deadline=20)
+                            data = next(iter(got.values()), None) if isinstance(got, dict) else None
+                        if data:
+                            if method is None:
+                                method = m
+                                log.info("import from TV %s: thumbnails work via %s API", tv_id, m)
+                            return bytes(data)
+                        errs.append(f"{m}: empty")
+                    except Exception as e:
+                        errs.append(f"{m}: {type(e).__name__}: {str(e)[:120]}")
+                        svc.reset()
+                raise TVError("; ".join(errs))
+
             for n, r in enumerate(need, 1):
                 try:
-                    data = svc._call(lambda a, c=r["content_id"]: a.get_thumbnail(c), attempts=1)
-                    if not data:
-                        raise TVError("empty thumbnail")
+                    data = fetch(r["content_id"])
                     thumb_path = config.THUMBS_DIR / f"tv{tv_id}_{r['content_id']}.jpg"
-                    pipeline.make_thumb_from_bytes(bytes(data), thumb_path)
+                    pipeline.make_thumb_from_bytes(data, thumb_path)
                     db.execute("UPDATE photos SET thumb_path=? WHERE id=?", (str(thumb_path), r["id"]))
                     db.commit()
                     import_state["thumbs"] += 1
@@ -451,7 +473,7 @@ async def _import_from_tv(tv_id: int):
                     fails += 1
                     failed_total += 1
                     if not first_err:
-                        first_err = f"{type(e).__name__}: {str(e)[:160]}"
+                        first_err = f"{type(e).__name__}: {str(e)[:300]}"
                         log.warning("import from TV %s: thumbnail for %s failed: %s", tv_id, r["content_id"], first_err)
                     svc.reset()
                     if fails >= 3:

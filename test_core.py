@@ -443,15 +443,17 @@ db.execute("INSERT INTO tv_photos(tv_id, photo_id, content_id, status) VALUES(?,
 class _FakeArt:
     def __init__(self, ok): self.ok = ok
     def get_thumbnail(self, cid):
+        raise RuntimeError("single API unsupported here")          # forces the batch path
+    def get_thumbnail_list(self, cids):
         if not self.ok: raise RuntimeError("firmware says no")
-        b = _io.BytesIO(); Image.new("RGB", (40, 20), "red").save(b, "JPEG"); return b.getvalue()
+        b = _io.BytesIO(); Image.new("RGB", (40, 20), "red").save(b, "JPEG"); return {cids[0] + ".jpg": bytearray(b.getvalue())}
 class _FakeSvc:
     ok = True
     def __init__(self, row): self.timeout = 30
     def my_photos(self): return [{"content_id": "MY_F0001", "width": 10, "height": 5, "image_date": "2024:01:01 00:00:00"},
                                  {"content_id": "MY_F0001"}, {"content_id": "MY_F0002", "width": 8, "height": 4},
                                  {"content_id": "MY_F0003"}, {"content_id": "MY_F0004"}]
-    def _call(self, fn, attempts=1): return fn(_FakeArt(self.ok))
+    def _call(self, fn, attempts=1, deadline=None): return fn(_FakeArt(self.ok))
     def reset(self): pass
 _orig = _w.TVService; _w.TVService = _FakeSvc
 try:
@@ -470,3 +472,23 @@ try:
 finally:
     _w.TVService = _orig
 print("import: ok")
+
+
+# --- deadline: a call that never returns is cut off and reported, socket closed
+import threading as _thr
+svc = tvservice.TVService({"id": 78, "host": "192.0.2.11", "client_name": "framevalet"})
+class _StuckArt:
+    closed = False
+    def close(self): self.closed = True
+svc._art_client = _StuckArt(); svc._tv = type("T", (), {"close": lambda self: None})()
+stuck = _StuckArt()
+def hang(a):
+    while not a.closed: _time.sleep(0.05)
+    raise RuntimeError("socket closed")
+t0 = _time.time()
+try:
+    svc._call(hang, attempts=1, deadline=0.5); raise AssertionError("no timeout")
+except tvservice.TVError as e:
+    assert "no answer within" in str(e), e
+assert _time.time() - t0 < 3
+print("deadline: ok")

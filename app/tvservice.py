@@ -14,6 +14,7 @@ Battle-tested behavior encoded here (learned against a real QN55LS03H):
   members add their own photos via SmartThings
 - slideshow durations are firmware presets (3 works where 10 errors with -7)
 """
+import concurrent.futures
 import contextlib
 import socket
 import time
@@ -88,11 +89,24 @@ class TVService:
         self._art_client = None
         self._tv = None
 
-    def _call(self, fn, *args, attempts=4, **kwargs):
-        """Retry with backoff + fresh connection; classifies auth failures."""
+    def _call(self, fn, *args, attempts=4, deadline=None, **kwargs):
+        """Retry with backoff + fresh connection; classifies auth failures.
+        `deadline` (seconds) is a wall clock: the library's wait loop reads
+        frames until one matches its request id, so a chatty TV can keep it
+        spinning past any socket timeout. We run the call in a helper thread
+        and, on overrun, close the socket so the helper dies, then raise."""
         last = None
         for i in range(attempts):
             try:
+                if deadline:
+                    art = self._art()
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        fut = pool.submit(fn, art, *args, **kwargs)
+                        try:
+                            return fut.result(timeout=deadline)
+                        except concurrent.futures.TimeoutError:
+                            self.reset()                 # unblocks the helper's recv
+                            raise TVError(f"no answer within {deadline}s")
                 return fn(self._art(), *args, **kwargs)
             except Exception as e:
                 last = e
