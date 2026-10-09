@@ -544,3 +544,15 @@ assert _w.import_text({"running": False}) == ""
 assert _w.import_text({"running": True, "phase": "photos", "done": 3, "total": 9}) == "adopting photos 3/9"
 assert _w.import_text({"running": True, "phase": "thumbnails", "thumbs": 554, "thumbs_total": 1211}) == "fetching thumbnails 554/1211"
 print("status text: ok")
+
+
+# --- attach route end-to-end over HTTP (catches route-level import/wiring errors)
+from fastapi.testclient import TestClient
+from app.main import app as _app
+with TestClient(_app) as c:
+    c.post("/login", data={"username": "alice", "password": "s3cure-pass-1"}, headers={"Origin": "http://testserver"})
+    r = c.post(f"/tvs/{tvrow['id']}/attach/MY_F0004", files={"file": ("x.jpg", bb.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
+    assert r.status_code == 200 and r.json()["ok"], r.text
+    r = c.post(f"/tvs/{tvrow['id']}/attach/MY_NOPE", files={"file": ("x.jpg", bb.getvalue(), "image/jpeg")}, headers={"Origin": "http://testserver"})
+    assert r.status_code == 400, r.text
+print("attach route: ok")
